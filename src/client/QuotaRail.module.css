@@ -1,0 +1,704 @@
+/**
+ * Quota rail styling.
+ *
+ * ## The shape
+ *
+ * The rail is a tab growing out of the screen edge: flush against the edge, a
+ * rounded slab on its inner side, and a **concave fillet** at the top and bottom
+ * where the slab meets the edge. The fillets are what stop the slab reading as a
+ * floating card and make it read as part of the frame — the reference design's
+ * "border transitions into the screen edge".
+ *
+ * The fillets are `radial-gradient` corner cut-outs on `.slabShape`'s
+ * pseudo-elements. They deliberately live on a dedicated absolutely-positioned
+ * shape layer rather than on the slab itself, because that layer owns a
+ * `filter: drop-shadow()`, and a filter applies to a whole subtree — putting it
+ * on the slab would drag the expanded detail cards into it.
+ *
+ * ## Theming
+ *
+ * Every colour is a `--dsw-*` token, and the slab fill is
+ * `--dsw-alias-bg-layer-3` (white in light, #353638 in dark) — the same raised
+ * surface DSH's own menus use. Because the fill itself flips with the scheme,
+ * the text and border tokens layered on top need no dark-mode overrides at all:
+ * `--dsw-alias-label-primary` is dark-on-white in light mode and
+ * white-on-charcoal in dark mode, which is correct in both. The only literal
+ * values below are shadow alphas, which are scheme-agnostic by nature (a black
+ * alpha shadow darkens whatever surface it falls on).
+ */
+
+/* ── the rail frame ──────────────────────────────────────────────────────── */
+
+.rail {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  /* The overlay layer is click-through; the rail opts back in on its own box. */
+  pointer-events: none;
+}
+
+/* No padding on the anchored side: the slab must sit flush against the edge for
+   the fillets to read as a transition into it. */
+.rail[data-anchor='right'] {
+  right: var(--dsh-pm-inset-right, 0px);
+}
+
+.rail[data-anchor='left'] {
+  left: var(--dsh-pm-inset-left, 0px);
+}
+
+.rail[data-align='top'] {
+  align-items: flex-start;
+  bottom: auto;
+  /* Clear of the session header, which is the one piece of chrome at the top. */
+  padding-top: 58px;
+}
+
+.rail[data-align='bottom'] {
+  align-items: flex-end;
+  top: auto;
+  padding-bottom: 20px;
+}
+
+/* ── the slab ────────────────────────────────────────────────────────────── */
+
+.slab {
+  /* Inner corner rounding of the slab. */
+  --dsh-pm-radius: 24px;
+  /* Vertical reach of the edge scoop: how far up (and down) the slab's edge
+     tapers into the screen edge. This is THE knob for how gradual the join
+     looks, and it is deliberately much taller than the slab's own corner radius
+     — see the note on `.slabShape::before`. */
+  --dsh-pm-scoop: 54px;
+  /* Horizontal padding, i.e. the slab's inset on the anchored side. */
+  --dsh-pm-edge-pad: 8px;
+  /* The VISIBLE gap between an open detail card and the slab's painted inner
+     edge. The popover is positioned against `.slot`, which sits inside the
+     padding above, so the offset below adds this back to land the gap here.
+     This is also the tongue's horizontal run — a few extra pixels here is what
+     keeps the waist from reading as a funnel. */
+  --dsh-pm-card-gap: 18px;
+  position: relative;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 12px var(--dsh-pm-edge-pad);
+  /* Fade at rest so the rail never competes with reading; lifts on engagement. */
+  opacity: var(--dsh-pm-rest-opacity, 0.82);
+  transition: opacity var(--ds-transition-duration, 160ms) var(--ds-ease-in-out, ease);
+}
+
+.rail[data-engaged='true'] .slab {
+  opacity: 1;
+}
+
+/**
+ * The painted shape: fill, inner rounding, edge fillets, and elevation.
+ *
+ * The fill is `--dsw-alias-bg-layer-3`, which resolves to `#fff` in light mode
+ * and `#353638` in dark mode — a raised surface that contrasts with the app
+ * background (`#fff` / `#151517`) in *both* schemes. Because the fill itself
+ * flips, text and borders layered on top need no per-scheme overrides at all:
+ * `--dsw-alias-label-primary` is dark-on-white in light mode and
+ * white-on-charcoal in dark mode, which is correct in both.
+ *
+ * Elevation uses `filter: drop-shadow()` rather than `box-shadow`, because
+ * `box-shadow` traces the border-box only — it cannot follow the concave
+ * fillets, so the slab would sit on a shadow of a different shape. A drop-shadow
+ * follows the alpha silhouette and therefore outlines the whole tab.
+ */
+.slabShape {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  /* Purely painted: only the ring buttons and the refresh control should be
+     hit-testable, so the shape never intercepts a click meant for the app. */
+  pointer-events: none;
+  background: var(--dsw-alias-bg-layer-3, #fff);
+  /* A hairline over the silhouette plus a soft lift. The hairline is what makes
+     the tab read as a surface rather than a stain in light mode, where the app
+     background is also white. */
+  filter:
+    drop-shadow(0 0 0.5px var(--dsw-alias-border-l4, rgb(0 0 0 / 16%)))
+    drop-shadow(0 3px 12px rgb(0 0 0 / 9%));
+}
+
+/* Rounded on the inner side only; the outer edge is flush and square, because
+   rounding it would leave a notch of app background against the screen edge. */
+.rail[data-anchor='right'] .slabShape {
+  border-radius: var(--dsh-pm-radius) 0 0 var(--dsh-pm-radius);
+}
+
+.rail[data-anchor='left'] .slabShape {
+  border-radius: 0 var(--dsh-pm-radius) var(--dsh-pm-radius) 0;
+}
+
+/**
+ * The edge scoops: where the slab tapers into the screen edge.
+ *
+ * ## The construction
+ *
+ * Each scoop is a box flush to the anchored edge, sitting directly above (or
+ * below) the slab, whose gradient is centred on the box corner that is both away
+ * from the screen edge and away from the slab. Radii are the box's own size
+ * (`ellipse 100% 100%`), and the fill is everything **outside** the ellipse, so
+ * within the box the fill is `u >= rx · sqrt(1 - (v/ry)²)` (u across, v away from
+ * the slab). That gives:
+ *
+ * - at the far end (`v = ry`) the fill is only the single line `u = rx`, i.e. the
+ *   tab starts as a sliver exactly ON the screen edge, **tangent** to it;
+ * - at the join (`v = 0`) the fill spans the box's whole width `rx`;
+ * - in between it grows monotonically, so the join is one continuous curve.
+ *
+ * ## Why the box is the slab's width MINUS its corner radius
+ *
+ * This is the part that is easy to get wrong, and an earlier revision did: a
+ * box spanning the full slab width looks right in isolation but leaves a visible
+ * **step** at the join. The slab's inner edge is not vertical at its very top —
+ * it is rounded, radius `--dsh-pm-radius`, so at the join the slab's own outline
+ * starts `radius` in from its inner edge. A full-width scoop reaches the full
+ * width at the join and therefore overshoots by exactly that radius.
+ *
+ * Sizing the box to `100% - radius` makes the two meet exactly: the scoop's foot
+ * spans from the slab's corner-arc origin to the screen edge, which is precisely
+ * the slab's own top row. Both boundaries are **vertical** there (the ellipse's
+ * `du/dv` diverges as `v -> 0`, and a circular corner arc is vertical where it
+ * meets its edge), so the silhouette runs continuously and with no kink from the
+ * screen edge, through the scoop, into the slab's rounded corner, and down its
+ * inner edge.
+ *
+ * ## The height is the "how smooth" knob
+ *
+ * `--dsh-pm-scoop` is the scoop's vertical reach and the only parameter that
+ * changes how gradual the join looks; a taller scoop spreads the same flare over
+ * more pixels. The width is fixed by the geometry above, so this is the dial.
+ *
+ * The 2px feather keeps the curve from banding; browsers interpolate gradients
+ * premultiplied, so `transparent` here does not bleed a dark halo.
+ */
+.slabShape::before,
+.slabShape::after {
+  content: '';
+  position: absolute;
+  width: calc(100% - var(--dsh-pm-radius));
+  height: var(--dsh-pm-scoop);
+}
+
+/* Right-anchored: the screen edge is the right; the centre is the left corner,
+   which for `::before` (the upper scoop) is also the top one. */
+.rail[data-anchor='right'] .slabShape::before {
+  bottom: 100%;
+  right: 0;
+  background: radial-gradient(
+    ellipse 100% 100% at 0 0,
+    transparent calc(100% - 2px),
+    var(--dsw-alias-bg-layer-3, #fff) 100%
+  );
+}
+
+.rail[data-anchor='right'] .slabShape::after {
+  top: 100%;
+  right: 0;
+  background: radial-gradient(
+    ellipse 100% 100% at 0 100%,
+    transparent calc(100% - 2px),
+    var(--dsw-alias-bg-layer-3, #fff) 100%
+  );
+}
+
+/* Left-anchored: mirrored, so the centre is on the right. */
+.rail[data-anchor='left'] .slabShape::before {
+  bottom: 100%;
+  left: 0;
+  background: radial-gradient(
+    ellipse 100% 100% at 100% 0,
+    transparent calc(100% - 2px),
+    var(--dsw-alias-bg-layer-3, #fff) 100%
+  );
+}
+
+.rail[data-anchor='left'] .slabShape::after {
+  top: 100%;
+  left: 0;
+  background: radial-gradient(
+    ellipse 100% 100% at 100% 100%,
+    transparent calc(100% - 2px),
+    var(--dsw-alias-bg-layer-3, #fff) 100%
+  );
+}
+
+/* ── one provider slot ───────────────────────────────────────────────────── */
+
+.slot {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.trigger {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 2px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  border-radius: 50%;
+  color: inherit;
+  font: inherit;
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary, #0f1115);
+  outline-offset: 2px;
+}
+
+.ringWrap {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+}
+
+.ring {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+
+.ringTrack {
+  stroke: var(--dsw-alias-border-l3, rgb(0 0 0 / 12%));
+}
+
+/* The arc's colour encodes severity, so a nearly exhausted provider reads at a
+   glance without opening the card. */
+.ringArc {
+  stroke: var(--dsw-alias-state-success-primary, #22c55e);
+  transition: stroke-dasharray var(--ds-transition-duration, 160ms) var(--ds-ease-in-out, ease);
+}
+
+.slot[data-level='warn'] .ringArc {
+  stroke: var(--dsw-alias-state-warn-primary, #f59e0b);
+}
+
+.slot[data-level='danger'] .ringArc {
+  stroke: var(--dsw-alias-state-error-primary, #ec1313);
+}
+
+.slot[data-level='idle'] .ringArc {
+  stroke: var(--dsw-alias-label-dimmed, #9aa3b0);
+}
+
+/* The glyph sits on the slab fill, so `label-primary` is already the correct
+   contrast in both schemes — no dark-mode override needed. */
+.ringGlyph {
+  position: relative;
+  display: grid;
+  place-items: center;
+  color: var(--dsw-alias-label-primary, #0f1115);
+}
+
+.percent {
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-secondary, #61666b);
+}
+
+/* ── the expanded detail card ────────────────────────────────────────────── */
+
+.popover {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10;
+  /* How far the tongue reaches back under the card's edge. Just enough to cover
+     the card's 0.5px border at the junction, so no hairline shows there. */
+  --dsh-pm-tongue-overlap: 1px;
+  --dsh-pm-tongue-height: 80px;
+  /* No `filter` on the wrapper. A `drop-shadow` here would trace the union of
+     the card and its tongue, and the part of that silhouette belonging to the
+     tongue would cast onto the slab it touches — a soft grey band across the
+     slab's inner edge, which is only ~60px wide. Elevation therefore stays a
+     plain `box-shadow` on the card (see `.card`), and the tongue is kept ABOVE
+     the card so that shadow cannot fall across it either. */
+}
+
+/**
+ * Placement of the card away from the anchored edge.
+ *
+ * The containing block is `.slot`, whose box is inset from the slab's edge by
+ * `edge-pad`; `100%` is that box's width. Adding the padding back makes the
+ * visible gap exactly `card-gap`, measured from the slab's inner edge — which is
+ * the number the tongue below is sized against.
+ */
+.popover[data-anchor='right'] {
+  right: calc(100% + var(--dsh-pm-edge-pad) + var(--dsh-pm-card-gap));
+}
+
+.popover[data-anchor='left'] {
+  left: calc(100% + var(--dsh-pm-edge-pad) + var(--dsh-pm-card-gap));
+}
+
+/**
+ * The tongue that bridges the card to the slab.
+ *
+ * Without it the card is a detached rectangle floating `card-gap` away from the
+ * tab. With it the silhouette reads as one continuous form:
+ *
+ *     screen edge → scoop → slab → tongue → card
+ *
+ * — the scoop where the slab leaves the edge, and the mirrored taper where the
+ * card reaches back toward the slab.
+ *
+ * The tongue is wider than the visible gap on purpose: it starts 1px *under* the
+ * card (covering the card's own border there) and ends inside the slab, so both
+ * junctions are hidden beneath other paint rather than relying on the two edges
+ * lining up exactly. Only the middle — the part crossing the gap — is what the
+ * eye actually reads as the taper.
+ *
+ * ## The silhouette is a clipped polygon
+ *
+ * The tongue leaves the card at full height and narrows toward the slab. Its
+ * sides follow a smoothstep, `s(t) = 3t² - 2t³`, so the inset from the tongue's
+ * top edge is `C · H · s(t)` with `C = 0.16`:
+ *
+ * - `s'(0) = s'(1) = 0`, so the sides are **tangent at both ends**: the tongue
+ *   leaves the card's edge flat and arrives at the slab flat, with no corner at
+ *   either join. A plain quadratic (`C·H·t²`) is tangent at only one end and
+ *   shows a visible kink at the other.
+ * - The neck is `H · (1 - 2C)` = 68% of the tongue's height. Shallower than a
+ *   60% neck on purpose: even with an 18px gap the bridge is short, and shedding
+ *   more height across that span reads as a funnel. The shallower waist is what
+ *   keeps the midpoint slope gentle (~35° instead of ~45°).
+ * - The sides are flat where the tongue meets the card and the slab and
+ *   steepest at the midpoint, so the tongue leaves the card flat, necks down
+ *   across the middle of the short bridge, and lands flat on the slab. Measured
+ *   against the straight chord between its two ends it is wider near each end
+ *   and coincides with the chord at the centre.
+ *
+ * `clip-path` is used rather than painted corner gradients because the latter
+ * cannot express this: `background` layers only ever *add* paint, so a concave
+ * bite would need the base layer absent there — and the solid base layer the
+ * body needs would refill exactly the corners the gradients cut.
+ *
+ * ## Stacking
+ *
+ * The tongue is painted **above** the card (`z-index: 1` against the card's
+ * `z-index: 0`), which matters for two reasons:
+ *
+ * - the card's `box-shadow` therefore falls *under* the tongue instead of
+ *   striping across it, and
+ * - the two fills overlap, so there is no hairline of background at the junction
+ *   regardless of subpixel rounding.
+ *
+ * The colour is identical to the card's, so the overlap is invisible; the only
+ * thing the ordering changes is which of the two paints last.
+ */
+.tongue {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  height: var(--dsh-pm-tongue-height);
+  background: var(--dsw-alias-bg-layer-3, #fff);
+  /* Purely painted decoration: never a hit target. */
+  pointer-events: none;
+}
+
+/* Right-anchored: the card sits left of the slab, so the tongue reaches right.
+   Sample points are `16% · smoothstep(t)` at t = 0, 0.1 … 1.0, mirrored below.
+   The width spans the card overlap, the visible gap, and the slab's own padding
+   — landing the neck exactly on the slab's inner edge and no further. */
+.popover[data-anchor='right'] .tongue {
+  left: calc(100% - var(--dsh-pm-tongue-overlap));
+  width: calc(var(--dsh-pm-tongue-overlap) + var(--dsh-pm-card-gap) + var(--dsh-pm-edge-pad));
+  clip-path: polygon(
+    0% 0%, 10% 0.45%, 20% 1.66%, 30% 3.46%, 40% 5.63%, 50% 8%, 60% 10.37%,
+    70% 12.54%, 80% 14.34%, 90% 15.55%, 100% 16%, 100% 84%, 90% 84.45%,
+    80% 85.66%, 70% 87.46%, 60% 89.63%, 50% 92%, 40% 94.37%, 30% 96.54%,
+    20% 98.34%, 10% 99.55%, 0% 100%
+  );
+}
+
+/* Left-anchored: mirrored in x, so the taper runs the other way. */
+.popover[data-anchor='left'] .tongue {
+  right: calc(100% - var(--dsh-pm-tongue-overlap));
+  width: calc(var(--dsh-pm-tongue-overlap) + var(--dsh-pm-card-gap) + var(--dsh-pm-edge-pad));
+  clip-path: polygon(
+    100% 0%, 90% 0.45%, 80% 1.66%, 70% 3.46%, 60% 5.63%, 50% 8%, 40% 10.37%,
+    30% 12.54%, 20% 14.34%, 10% 15.55%, 0% 16%, 0% 84%, 10% 84.45%,
+    20% 85.66%, 30% 87.46%, 40% 89.63%, 50% 92%, 60% 94.37%, 70% 96.54%,
+    80% 98.34%, 90% 99.55%, 100% 100%
+  );
+}
+
+.card {
+  width: 258px;
+  padding: 12px 13px;
+  border-radius: 14px;
+  background: var(--dsw-alias-bg-layer-3, #fff);
+  border: 0.5px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 10%));
+  color: var(--dsw-alias-label-primary, #0f1115);
+  /* `position` + `z-index` so the tongue can be layered against the card: the
+     card is 0 and the tongue 1. Elevation is a `box-shadow` here (not a
+     `drop-shadow` on the wrapper) because that traces the CARD, and the tongue
+     paints over it — so no shadow band appears where the bridge meets the slab. */
+  position: relative;
+  z-index: 0;
+  box-shadow: var(--dsw-elevation-prominent, 0 3px 20px rgb(0 0 0 / 13%));
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.cardIcon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1.5px solid var(--dsw-alias-state-success-primary, #22c55e);
+  color: var(--dsw-alias-label-primary, #0f1115);
+  flex: none;
+}
+
+.cardIcon[data-level='warn'] {
+  border-color: var(--dsw-alias-state-warn-primary, #f59e0b);
+}
+
+.cardIcon[data-level='danger'] {
+  border-color: var(--dsw-alias-state-error-primary, #ec1313);
+}
+
+.cardIcon[data-level='idle'] {
+  border-color: var(--dsw-alias-label-dimmed, #9aa3b0);
+}
+
+.cardTitles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.cardName {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 17px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cardPlan {
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--dsw-alias-label-tertiary, #81858c);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.windows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.window {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.windowHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.windowLabel {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-secondary, #61666b);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.windowReset {
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--dsw-alias-label-tertiary, #81858c);
+  white-space: nowrap;
+  flex: none;
+}
+
+.bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--dsw-alias-border-l2, rgb(0 0 0 / 10%));
+  overflow: hidden;
+}
+
+.barFill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--dsw-alias-state-success-primary, #22c55e);
+  transition: width var(--ds-transition-duration, 160ms) var(--ds-ease-in-out, ease);
+}
+
+.bar[data-level='warn'] .barFill {
+  background: var(--dsw-alias-state-warn-primary, #f59e0b);
+}
+
+.bar[data-level='danger'] .barFill {
+  background: var(--dsw-alias-state-error-primary, #ec1313);
+}
+
+.bar[data-level='idle'] .barFill {
+  background: var(--dsw-alias-label-dimmed, #9aa3b0);
+}
+
+.barCaption {
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--dsw-alias-label-tertiary, #81858c);
+}
+
+.balanceLine {
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--dsw-alias-label-secondary, #61666b);
+}
+
+.cardNotice {
+  font-size: 11px;
+  line-height: 15px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--dsw-alias-interactive-bg-hover, rgb(38 49 72 / 6%));
+  color: var(--dsw-alias-label-secondary, #61666b);
+  word-break: break-word;
+}
+
+.cardNotice[data-tone='error'] {
+  background: var(--dsw-alias-interactive-bg-hover-danger, rgb(236 19 19 / 5%));
+  color: var(--dsw-alias-state-error-primary, #ec1313);
+}
+
+.cardFoot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 0.5px solid var(--dsw-alias-border-l1, rgb(0 0 0 / 4%));
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--dsw-alias-label-tertiary, #81858c);
+}
+
+/*
+ * The account block wrapper. The card is narrow (258px), so the block gets its
+ * own top border to separate login state from metering, and the card's own
+ * vertical rhythm is preserved by the margin.
+ */
+.cardAccount {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 0.5px solid var(--dsw-alias-border-l1, rgb(0 0 0 / 4%));
+}
+
+.cardAccountName {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cardBalance {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-secondary, #61666b);
+}
+
+/* ── the refresh action ──────────────────────────────────────────────────── */
+
+.actions {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 6px;
+  margin-top: 1px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 10%));
+}
+
+.action {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+  color: var(--dsw-alias-label-tertiary, #81858c);
+  transition: background var(--ds-transition-duration, 160ms) var(--ds-ease-in-out, ease);
+}
+
+.action:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover, rgb(38 49 72 / 6%));
+  color: var(--dsw-alias-label-primary, #0f1115);
+}
+
+.action:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.action[data-error='true'] {
+  color: var(--dsw-alias-state-error-primary, #ec1313);
+}
+
+.action:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary, #0f1115);
+  outline-offset: 1px;
+}
+
+/* A narrow viewport leaves no room for the card, so only the rings remain. */
+@media (max-width: 900px) {
+  .popover {
+    display: none;
+  }
+}
+
+/* Honour a reduced-motion preference: the rail still updates, it just stops
+   animating opacity and the arc. */
+@media (prefers-reduced-motion: reduce) {
+  .slab,
+  .ringArc,
+  .barFill,
+  .action {
+    transition: none;
+  }
+}

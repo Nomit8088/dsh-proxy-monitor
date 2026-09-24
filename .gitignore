@@ -1,0 +1,17 @@
+node_modules/
+*.tsbuildinfo
+*.tgz
+
+# lib/ is COMMITTED ON PURPOSE — do not add it back here.
+#
+# The host half compiles against ~29 `@deepseek-ai/*` type surfaces that only
+# exist inside an installed DSH, and pnpm blocks a git dependency's build
+# scripts (incl. `prepare`) by default. A repository without a ready-to-load
+# bundle would therefore install as an empty shell. Committing lib/ is what
+# makes `dsh plugin --profile web add github:Nomit8088/dsh-proxy-monitor`
+# work in one command with no build step, no approval prompt, and no DSH
+# source checkout. Run `node scripts/build.mjs` before every release commit.
+
+# The build pins npm's cache inside the repository so it never needs write
+# access outside the workspace; it is scratch space, never committed.
+.npm-cache/

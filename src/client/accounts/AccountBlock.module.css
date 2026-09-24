@@ -1,0 +1,184 @@
+/*
+ * The shared account block.
+ *
+ * Every colour is a `--dsw-*` alias token so the block follows the app's
+ * light/dark theme with no override rule of its own — the same rule the rail
+ * and settings sheet already follow, and `scripts/inspect-css.mjs` enforces it
+ * on every build.
+ *
+ * The block is used in two places (the rail's detail card and the settings
+ * page), so it carries no outer margin or positioning: the host supplies those.
+ */
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.identity {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.account {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge {
+  flex: none;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.badge[data-state='signed-in'] {
+  color: var(--dsw-alias-state-success-primary);
+  border-color: var(--dsw-alias-state-success-primary);
+}
+
+.badge[data-state='error'] {
+  color: var(--dsw-alias-state-error-primary);
+  border-color: var(--dsw-alias-state-error-primary);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  min-width: 0;
+}
+
+.hint {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.instruction {
+  color: var(--dsw-alias-label-secondary);
+  word-break: break-word;
+}
+
+.pending {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+/* A quiet rotation cue: no colour of its own, so it reads in both themes. */
+.spinner {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--dsw-alias-border-l2);
+  border-top-color: var(--dsw-alias-brand-primary);
+  border-radius: 50%;
+  animation: dsh-pm-account-spin 0.9s linear infinite;
+}
+
+@keyframes dsh-pm-account-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-primary);
+}
+
+.link {
+  color: var(--dsw-alias-brand-primary);
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.errorToggle {
+  align-self: flex-start;
+  font-size: 11px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--dsw-alias-state-error-primary);
+  text-align: left;
+}
+
+.errorDetail {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  word-break: break-word;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.button {
+  font-size: 12px;
+  padding: 3px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-button-primary-fill);
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.buttonQuiet {
+  font-size: 12px;
+  padding: 3px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.buttonQuiet:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.buttonQuiet:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

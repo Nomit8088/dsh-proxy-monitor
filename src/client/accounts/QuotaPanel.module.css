@@ -1,0 +1,175 @@
+/*
+ * The quota panel: metered windows plus the refresh control.
+ *
+ * Theme tokens only, like every other sheet here — no dark-scheme override is
+ * needed because the alias tokens already flip with the theme, and
+ * `scripts/inspect-css.mjs` audits that on every build.
+ */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.freshness {
+  flex: 1;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.refresh {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.refresh:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.refresh:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.plan,
+.account,
+.balance {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.balance {
+  color: var(--dsw-alias-label-primary);
+}
+
+.windows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.window {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.windowHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.windowLabel {
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.windowMeta {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.bar {
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-layer-3);
+  border: 1px solid var(--dsw-alias-border-l1);
+}
+
+.barFill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--dsw-alias-state-success-primary);
+}
+
+.bar[data-level='warn'] .barFill {
+  background: var(--dsw-alias-state-warn-primary);
+}
+
+.bar[data-level='danger'] .barFill {
+  background: var(--dsw-alias-state-error-primary);
+}
+
+.barCaption {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.absolute {
+  color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.balanceLine {
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.notice {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l1);
+}
+
+.notice[data-tone='unconfigured'] {
+  border-color: var(--dsw-alias-border-l2);
+}
+
+.notice[data-tone='error'] {
+  border-color: var(--dsw-alias-state-error-primary);
+}
+
+.noticeTitle {
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.notice[data-tone='error'] .noticeTitle {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.noticeDetail {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  word-break: break-word;
+}

@@ -1,0 +1,33 @@
+/**
+ * Typecheck the browser half.
+ *
+ * The client bundle is built by tsdown (which does its own transpile), but the
+ * browser sources still deserve type checking — they use JSX, the slot
+ * contracts, and the settings scope, all of which are easy to get subtly wrong.
+ *
+ * Run with:  node node_modules/typescript/bin/tsc -p tsconfig.client.json --noEmit
+ */
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "types": [],
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowImportingTsExtensions": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true
+  },
+  "include": [
+    "src/client/**/*.ts",
+    "src/client/**/*.tsx",
+    "src/client/**/*.d.ts",
+    "src/contract.ts",
+    "src/geometry.ts"
+  ]
+}

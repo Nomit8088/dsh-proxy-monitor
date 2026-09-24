@@ -1,0 +1,6 @@
+# lib/ is the committed build output (see .gitignore for why it is tracked).
+# It is generated: keep it out of language stats and out of review diffs, so a
+# rebuild never looks like a hand-written change.
+lib/** linguist-generated=true -diff
+
+*.sh text eol=lf

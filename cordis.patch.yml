@@ -1,0 +1,11 @@
+# dsh-proxy-monitor bundle patch.
+#
+# One Host row. The browser half is declared by the `dsh.client` entry in
+# package.json, which the modules node half scans into window.__DSH_BOOT__; it
+# does not need a row of its own.
+#
+# The row injects `settings` and `connection`, both of which the Web surface
+# already provides, so no other composition change is required.
+- insert:
+    - id: dsh-proxy-monitor
+      name: '@dsh-external/dsh-proxy-monitor'

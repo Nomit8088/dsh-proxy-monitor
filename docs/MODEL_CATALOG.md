@@ -1,0 +1,132 @@
+# MODEL_CATALOG.md — 模型刷新与选择器生效
+
+设置页的模型列表必须来自**当前账号的活体目录**，并能动态开关；勾选「支持图像」的模型在 DSH 对话里不得被拦截成文本。对话模型选择器必须读同一份偏好，而不是旧包写死的静态表。
+
+---
+
+## 1. 为什么设置页改了选择器没变
+
+DSH 模型选择器只认 `ctx.llm.adapters` 里该路由的 `listModels` / `resolveModel`。
+
+两件独立的事经常被混在一起：
+
+| 层 | 作用 | 不作用的范围 |
+| --- | --- | --- |
+| 目录 HTTP + 设置页 `ModelCatalogPanel` | 给人看、给人改 `enabledModelIds` / `imageModelIds` | 不自动改选择器 |
+| LLM adapter 的 `listModels` | 选择器真正的数据源 | 不读设置页 React state |
+
+因此每个订阅都要同时做：
+
+1. 本插件自己的 GET/POST 目录 API。
+2. adapter（或 leftover wrap）按同一份偏好过滤并声明 `inputModalities`。
+3. 写入后 `emitAdaptersUpdated()` / `ctx.emit('llm/adapters-updated')`。
+4. 用户**重新打开**模型选择器（运行中的旧会话不回溯）。
+
+Profile 里若还装着 `dsh-codex` 等旧包，它们会先占路由。必须走 `installOrTakeOverAdapter` 或 `wrapAdapterCatalog`（见 `ARCHITECTURE.md` §4），否则设置页再完整，选择器仍是旧目录。
+
+---
+
+## 2. HTTP 契约
+
+路径挂在本插件下，避开旧包：
+
+| 订阅 | Path | 活体来源 |
+| --- | --- | --- |
+| Codex | `/plugins/dsh-proxy-monitor/codex/models` | `GET https://chatgpt.com/backend-api/codex/models`（Bearer + `chatgpt-account-id`）；未登录则静态补丁（含 gpt-6 族） |
+| Grok | `/plugins/dsh-proxy-monitor/grok/models` | Grok 活体 catalog + pi-ai `xai` 模板 |
+| WorkBuddy | `/plugins/dsh-proxy-monitor/workbuddy/models` | leftover `/plugins/dsh-workbuddy-connect/status`；刷新走 `POST .../probe` `{action:"refresh"}` + `x-workbuddy-probe-key` |
+| Antigravity | `/antigravity/api/models` | 账号 available models；硬编码 `MODELS` 只当族模板，未出现在 payload 的族不得注入 |
+
+### 2.1 信封
+
+成功：
+
+```json
+{ "ok": true, "value": {
+  "enabledModelIds": ["..."],
+  "imageModelIds": ["..."],
+  "options": [
+    { "id": "...", "name": "...", "enabled": true,
+      "supportsImages": true, "inputModalities": ["text", "image"],
+      "meta": "optional" }
+  ]
+}}
+```
+
+失败：`{ "ok": false, "error": "..." }`，HTTP 4xx/5xx。Client 用 `catalogRequest()` 解信封。
+
+### 2.2 方法
+
+| 方法 | Body | 行为 |
+| --- | --- | --- |
+| `GET` | — | 读当前目录 + 已存偏好，不打上游 |
+| `POST` | `{ "refresh": true }` | 拉活体 → `mergeEnabledModelIds` / `mergeImageModelIds` → 落盘 → 通知选择器 |
+| `POST` | `{ "enabledModelIds": [], "imageModelIds": [] }` | 只改偏好，不打上游 |
+
+不要把刷新做成「改 settings schema 的某个 model 字段」——旧 Codex 包对未知字段会 400 `request contains an unknown model setting`。
+
+前端：进入 Tab 时 `load(true)` 拉活体；勾选走 save POST。刷新失败则回退 GET，保留上一份列表。
+
+---
+
+## 3. 合并规则（`src/catalog/preferences.ts`）
+
+这是四家共用的纯函数，禁止在各家 integration 里再写一套。
+
+### 3.1 启用 `mergeEnabledModelIds`
+
+- **第一次**（没有旧 catalog、没有旧 enabled）：启用活体里全部 id。
+- **之后**：保留用户关掉的；活体里**新出现**的 id 自动启用；活体里消失的 id 丢掉。
+
+### 3.2 图像 `mergeImageModelIds`
+
+- 已见过的 id：保持用户上次勾选。
+- 新 id：用活体推断（`supportsImages` / `inputModalities` / `input` 含 `"image"`）。
+- WorkBuddy 活体没有 `supportsImages` 时，用 id 匹配 `vl|vision|5v|4v|image` 作为默认，用户仍可改。
+
+### 3.3 写给 DSH 的能力位 `withUserImageSupport`
+
+```
+选中图像 → inputModalities: ["text", "image"]
+未选   → inputModalities: ["text"]
+```
+
+DSH 的 `projectImagesForTextModel` 在「定义了 `inputModalities` 且不含 `image`」时拦截附件。因此：
+
+- 不能只设一个 UI 布尔却不改 adapter 模型对象。
+- Codex 还要把同一选择 overlay 到 pi-ai 的 `model.input`。
+- 「未定义 modalities」和「明确只有 text」不是一回事；本插件统一显式写出。
+
+---
+
+## 4. Adapter 必须吃同一份偏好
+
+| 订阅 | 做法 |
+| --- | --- |
+| Codex | 自有 adapter：静态 gpt-6 补丁 ∪ 活体 merge → 按 enabled 过滤 → overlay image |
+| Grok | `GrokAuthAdapter` 读 `GrokModelSettingsStore` 的 `visibleModelIds` / `imageModelIds` |
+| Antigravity | `AntigravityAdapter` + `FileModelSettingsStore`（与 `/antigravity/api/models` 同一文件） |
+| WorkBuddy | 不换 stream；`wrapAdapterCatalog` + `overlayWorkBuddyAdapterModels` |
+
+`listModels` 只返回 **enabled** 的模型。`resolveModel` 对已启用的 id 仍要能解析，并带上当前图像 modalities。
+
+---
+
+## 5. 活体失败时的降级
+
+- **已登录但上游失败**：保留上次 catalog，设置页报 error，不要用过期硬编码表覆盖用户勾选。
+- **未登录**：可以展示静态模板（Codex gpt-6 补丁、Grok pi-ai 基表），但刷新按钮仍应存在；登录后再 refresh 才是真目录。
+- **禁止**把「我们猜的常用模型」写进 `listModels` 冒充活体。Antigravity 已经踩过：硬编码族在账号没有时仍出现。
+
+Codex 活体需要 OAuth access + `accountId`。没签过到 `/codex/models` 的会话，历史上从未 live-fetch 过——5.3 出现在选择器里只是因为 pi-ai 静态 JSON。新模型（如 gpt-6-luna / gpt-6-sol）必须进静态补丁 **或** 活体 payload，只改设置页无效。
+
+---
+
+## 6. 验收
+
+1. 设置页「刷新模型」后列表与账号一致，不是写死表。
+2. 取消勾选 → 重新打开对话模型选择器 → 该项消失。
+3. 勾选「支持图像」→ 对该模型发带图消息 → DSH **不**把图投影成文本。
+4. 关掉图像 → 带图消息被拦截（证明开关真的改了 `inputModalities`）。
+5. 热重载后选择器仍走本插件目录（leftover 未把槽抢回去）。
+6. 对应 `scripts/test-antigravity-models.mjs`、`scripts/test-catalog-preferences.mjs` 全绿。
