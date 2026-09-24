@@ -1,0 +1,56 @@
+name: Release
+
+# Tag-driven release. The workflow does NOT build: `lib/` is committed on
+# purpose (see .gitignore / docs/INSTALL.md §10) because the host half compiles
+# against the DSH type surface, which does not exist on a clean runner. So this
+# job verifies the committed bundle is present, packs it, and attaches the tgz —
+# which is itself a supported install spec:
+#
+#   dsh plugin --profile web add https://github.com/<owner>/<repo>/releases/download/v<version>/<tgz>
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Verify tag matches package.json version
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match package.json version ${VERSION}" >&2
+            exit 1
+          fi
+
+      - name: Verify the committed bundle and bundle patch are present
+        run: |
+          for f in lib/index.js lib/client.js lib/types/index.d.ts cordis.patch.yml; do
+            if [ ! -f "$f" ]; then
+              echo "missing $f — run 'node scripts/build.mjs' and commit lib/ before tagging" >&2
+              exit 1
+            fi
+          done
+
+      - name: Pack
+        run: |
+          mkdir -p artifacts
+          npm pack --pack-destination artifacts
+          ls -l artifacts
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" artifacts/*.tgz \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes
