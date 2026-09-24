@@ -12,7 +12,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-host-webserver'
+import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 
 import {
   defaultImageModelIdsFrom,
@@ -21,12 +21,37 @@ import {
   withUserImageSupport,
 } from './catalog/preferences.js'
 import { resolveDshHome } from './home.js'
+import { setupOutcomes } from './diagnostics.js'
 
 export const WORKBUDDY_MODELS_API = '/plugins/dsh-proxy-monitor/workbuddy/models'
 export const CODEX_MODELS_API = '/plugins/dsh-proxy-monitor/codex/models'
+/**
+ * The picker's own view, for diagnosis.
+ *
+ * `docs/MODEL_CATALOG.md` §1 splits "the catalog an operator edits" from "the
+ * catalog the picker reads", and only the second one decides what a user can
+ * select. They are answered by different code, so a disagreement is invisible
+ * from the settings page alone. This route asks the LLM registry the same
+ * question the picker asks, which turns that whole class of bug into one GET.
+ */
+export const PICKER_MODELS_API = '/plugins/dsh-proxy-monitor/picker/models'
 
 const WORKBUDDY_STATUS = '/plugins/dsh-workbuddy-connect/status'
 const WORKBUDDY_PROBE = '/plugins/dsh-workbuddy-connect/probe'
+
+/**
+ * Basename of the WorkBuddy enable/image preferences.
+ *
+ * ONE file, because two would drift: the vendored WorkBuddy runtime
+ * (`src/workbuddy/index.js`) reads this name from the DSH home for its own
+ * `listModels` filter, and the operator's settings page writes whatever the
+ * route that answers implements. When the two named different files, a
+ * selection landed in one and the picker filtered by the other — which is
+ * exactly the "I enabled a model and it never appeared" report. The vendored
+ * constant `WORKBUDDY_USER_CATALOG_FILENAME` must stay equal to this string
+ * (`scripts/test-workbuddy-catalog.mjs` asserts it by reading that source).
+ */
+export const WORKBUDDY_PREFS_FILENAME = '.workbuddy-user-catalog.json'
 
 function sendJson(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, {
@@ -68,7 +93,7 @@ interface WorkBuddyPrefs {
 }
 
 function prefsPath(): string {
-  return join(resolveDshHome(), 'storages', 'workbuddy-model-settings.json')
+  return join(resolveDshHome(), WORKBUDDY_PREFS_FILENAME)
 }
 
 async function readPrefs(): Promise<WorkBuddyPrefs> {
@@ -207,12 +232,43 @@ export async function overlayWorkBuddyAdapterModels<T extends { id: string; inpu
     }))
 }
 
+/**
+ * Register one exact route, tolerating a path this plugin already serves.
+ *
+ * `webServer.register()` throws on a duplicate path, and this plugin
+ * deliberately has two candidates for the WorkBuddy catalog URL: the vendored
+ * WorkBuddy runtime registers it whenever its `apply()` got as far as the web
+ * surface, and this module registers the same URL as a fallback for the case
+ * where it did not. Fighting over the slot is not useful — both read and write
+ * the same preferences file (see {@link WORKBUDDY_PREFS_FILENAME}) — so the
+ * loser steps aside instead of failing the whole fiber.
+ *
+ * @param ctx - context carrying the `webServer` service.
+ * @param route - the exact route to register.
+ * @returns the route's disposer, or a no-op when the path was already taken.
+ */
+function registerOrKeepExisting(ctx: Context, route: WebRoute): () => void {
+  const server = ctx.get('webServer')
+  if (server === undefined) return () => {}
+  try {
+    return server.register(route)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (!/duplicate .*route/u.test(message)) throw error
+    ctx.logger.info(
+      'dsh-proxy-monitor: %s is already served inside this plugin; keeping the existing handler.',
+      route.path,
+    )
+    return () => {}
+  }
+}
+
 /** Register the WorkBuddy catalog API even when the standalone bundle already applied. */
 export function registerWorkBuddyCatalogApi(ctx: Context): void {
   ctx.inject(['webServer'], webCtx => {
     webCtx.effect(
-      () =>
-        webCtx.webServer.register({
+      () => {
+        const route: WebRoute = {
           kind: 'exact',
           path: WORKBUDDY_MODELS_API,
           handler: async (request, response) => {
@@ -273,8 +329,75 @@ export function registerWorkBuddyCatalogApi(ctx: Context): void {
               })
             }
           },
-        }),
+        }
+        return registerOrKeepExisting(webCtx, route)
+      },
       'dsh-proxy-monitor: workbuddy model catalog',
+    )
+  })
+}
+
+/** One provider row in the picker diagnostic, with its models or its failure. */
+interface PickerProviderRow {
+  id: string
+  name: string
+  models: Array<{ id: string; name: string; inputModalities?: readonly string[] }>
+  error?: string
+}
+
+/**
+ * Register a read-only diagnostic that answers what the model picker sees.
+ *
+ * It calls the same public registry methods the picker calls
+ * (`listProviders()` then `listModels(provider)`), so its answer *is* the
+ * picker's answer — including the failure rows, which are kept instead of
+ * swallowed so "the provider is missing" and "the provider threw" stay
+ * distinguishable.
+ *
+ * @param ctx - host context; needs both `llm` and `webServer`.
+ */
+export function registerPickerModelsApi(ctx: Context): void {
+  ctx.inject(['llm', 'webServer'], llmCtx => {
+    llmCtx.effect(
+      () => {
+        const route: WebRoute = {
+          kind: 'exact',
+          path: PICKER_MODELS_API,
+          handler: async (request, response) => {
+            if (request.method !== 'GET') {
+              return sendJson(response, 405, { ok: false, error: 'method-not-allowed' })
+            }
+            const requested = new URL(request.url ?? '/', 'http://127.0.0.1').searchParams.get('provider')
+            const llm = llmCtx.llm
+            const rows: PickerProviderRow[] = []
+            for (const provider of llm.listProviders()) {
+              if (requested !== null && provider.id !== requested) continue
+              try {
+                const models = await llm.listModels(provider.id)
+                rows.push({
+                  id: provider.id,
+                  name: provider.name,
+                  models: models.map(model => ({
+                    id: model.id,
+                    name: model.name,
+                    ...(model.inputModalities === undefined ? {} : { inputModalities: model.inputModalities }),
+                  })),
+                })
+              } catch (error) {
+                rows.push({
+                  id: provider.id,
+                  name: provider.name,
+                  models: [],
+                  error: error instanceof Error ? error.message : String(error),
+                })
+              }
+            }
+            return sendJson(response, 200, { ok: true, value: { providers: rows, setup: setupOutcomes() } })
+          },
+        }
+        return registerOrKeepExisting(llmCtx, route)
+      },
+      'dsh-proxy-monitor: picker model diagnostics',
     )
   })
 }

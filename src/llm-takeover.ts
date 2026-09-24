@@ -47,7 +47,44 @@ export function installOrTakeOverAdapter(
   return 'taken-over'
 }
 
-/** Wrap listModels/resolveModel on a leftover adapter without replacing stream. */
+/**
+ * Bookkeeping for one adapter we have already overlaid.
+ *
+ * The overlay mutates the adapter instance in place, so it must be idempotent:
+ * a second wrap would stack a second filter and a second modality rewrite on
+ * the same object. The marker also carries the disposer, so a caller that
+ * re-checks on every topology change gets the same unwrap back instead of a
+ * fresh (and useless) one.
+ */
+const OVERLAY = Symbol.for('@dsh-external/dsh-proxy-monitor/catalog-overlay')
+
+interface OverlaidAdapter extends LlmAdapter {
+  [OVERLAY]?: {
+    listModels: LlmAdapter['listModels']
+    resolveModel: LlmAdapter['resolveModel']
+    unwrap: () => void
+  }
+}
+
+/**
+ * Wrap `listModels`/`resolveModel` on whichever adapter currently owns
+ * `provider`, without replacing `stream`.
+ *
+ * The adapter is looked up at call time rather than captured, because the
+ * order of "register the route" and "overlay its catalog" is not ours to
+ * choose: a sibling module (or a later generation of this one) may register
+ * after this call. A caller that re-invokes this on `llm/adapters-updated`
+ * therefore always ends up overlaying the live instance — and a re-invocation
+ * after the same instance is already overlaid is a no-op.
+ *
+ * @param llm - the LLM registry (its adapter map is read directly; the
+ *   overlay seam has no public API by design).
+ * @param provider - the route to overlay.
+ * @param wrap - the overlay pair, each given the original bound method.
+ * @param log - plugin logger.
+ * @returns the disposer that restores the adapter's own methods. Calling it
+ *   after the instance was replaced is harmless; calling it twice is harmless.
+ */
 export function wrapAdapterCatalog(
   llm: LlmRegistry,
   provider: string,
@@ -64,23 +101,37 @@ export function wrapAdapterCatalog(
     ) => ReturnType<LlmAdapter['resolveModel']>
   },
   log: { info: (message: string, ...args: unknown[]) => void; warn: (message: string, ...args: unknown[]) => void },
-): boolean {
+): () => void {
   const slot = llm.adapters?.get(provider)
   if (slot === undefined) {
-    log.warn('dsh-proxy-monitor: cannot wrap %s catalog; leftover adapter not found.', provider)
-    return false
+    log.warn('dsh-proxy-monitor: cannot wrap %s catalog; no adapter owns the route yet.', provider)
+    return () => {}
   }
-  const inner = slot.adapter
+  const inner = slot.adapter as OverlaidAdapter
+  const existing = inner[OVERLAY]
+  if (existing !== undefined) return existing.unwrap
   const originalList = inner.listModels.bind(inner)
   const originalResolve = inner.resolveModel.bind(inner)
+  const marker: NonNullable<OverlaidAdapter[typeof OVERLAY]> = {
+    listModels: originalList,
+    resolveModel: originalResolve,
+    unwrap: () => {
+      // A later wrap of the same instance owns the slot now; leave it alone.
+      if (inner[OVERLAY] !== marker) return
+      inner.listModels = originalList
+      inner.resolveModel = originalResolve
+      delete inner[OVERLAY]
+    },
+  }
   inner.listModels = (id: string) => wrap.listModels(originalList, id)
   inner.resolveModel = (id: string, model: string, signal?: AbortSignal) =>
     wrap.resolveModel(originalResolve, id, model, signal)
+  inner[OVERLAY] = marker
   try {
     llm.emitAdaptersUpdated?.()
   } catch {
     /* best-effort */
   }
-  log.info('dsh-proxy-monitor: wrapped %s leftover adapter catalog.', provider)
-  return true
+  log.info('dsh-proxy-monitor: overlaying the %s adapter catalog.', provider)
+  return marker.unwrap
 }

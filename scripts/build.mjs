@@ -94,6 +94,7 @@ run('Testing antigravity account', join(ROOT, 'scripts', 'test-antigravity-accou
 run('Testing antigravity models', join(ROOT, 'scripts', 'test-antigravity-models.mjs'), [])
 run('Testing catalog preferences', join(ROOT, 'scripts', 'test-catalog-preferences.mjs'), [])
 run('Testing workbuddy encrypted auth', join(ROOT, 'scripts', 'test-workbuddy-encrypted-auth.mjs'), [])
+run('Testing workbuddy catalog single source', join(ROOT, 'scripts', 'test-workbuddy-catalog.mjs'), [])
 run('Verifying rail silhouette', join(ROOT, 'scripts', 'preview-shape.mjs'), [])
 run('Bundling client (tsdown)', TSDOWN, ['-c', 'tsdown.config.ts'])
 run('Inspecting bundle CSS', join(ROOT, 'scripts', 'inspect-css.mjs'), [])

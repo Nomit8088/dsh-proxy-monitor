@@ -19,7 +19,18 @@
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
 export declare const name = "@dsh-external/dsh-proxy-monitor";
-/** Required Host services: provider configuration and the browser transport. */
+/**
+ * Required Host services: provider configuration, the browser transport, and
+ * the LLM registry.
+ *
+ * `llm` is not optional here even though most of this plugin reaches the
+ * registry through a nested `ctx.inject(['llm'], …)`: the WorkBuddy runtime is
+ * vendored whole and touches `ctx.llm` directly, so the *plugin's* inject list
+ * is what decides whether its route may register at all. Omitting it made cordis
+ * refuse the property access ("cannot get property \"llm\" without inject"),
+ * which the vendored code catches and logs — leaving WorkBuddy selectable in
+ * settings and absent from the composer's model picker.
+ */
 export declare const inject: string[];
 /**
  * Plugin configuration. Every field has a default, so a bare `insert` row

@@ -75,6 +75,7 @@ dsh-proxy-monitor/
 │   ├── test-codex-account.mjs      # Codex 浏览器 OAuth 状态机测试 (9 项)
 │   ├── test-antigravity-account.mjs# Antigravity 状态与额度测试 (4 项)
 │   ├── test-antigravity-models.mjs # Antigravity 活体目录与图像开关测试
+│   ├── test-workbuddy-catalog.mjs  # WorkBuddy 偏好单源 / vendored 无缓存契约
 │   └── probe-accounts.mjs          # 实机实时账户探针
 ├── src/
 │   ├── accounts/                   # 统一账户适配抽象层
@@ -109,6 +110,11 @@ dsh-proxy-monitor/
    - 实现 `AccountAdapter`（能力布尔如实填，禁止 UI 按 id 推断登录/登出）。
    - 目录 HTTP 挂 `/plugins/dsh-proxy-monitor/<id>/models`；`listModels` 必须吃同一份启用/图像偏好。
    - leftover 占路时用 `installOrTakeOverAdapter` / `wrapAdapterCatalog`，不要 `registerAdapter` 硬撞。
+   - **搬进 vendored 运行时**时，若它直接读 `ctx.<service>`（而不是 `ctx.inject([...], cb)`），该 service 必须写进
+     `src/index.ts` 的 `export const inject`；漏了会被 cordis 拒绝为 `cannot get property "<service>" without inject`，
+     而 vendored 代码常自己 catch 掉 —— 症状是「设置页有、选择器没有」，且日志之外毫无提示（详见 `docs/MODEL_CATALOG.md` §1.2）。
+   - 验收前先问选择器本人：`GET /plugins/dsh-proxy-monitor/picker/models`（含各 provider 的注册结果，§1.1）。
+   - 一份偏好：别让设置页写 A 文件、adapter 读 B 文件；vendored 读取不得带进程级缓存。
    - `tabs.tsx` 加 Tab，体里复用 `ModelCatalogPanel`，不要新开 `settings.section`。
    - `scripts/test-xxx-account.mjs` 接入 `scripts/build.mjs`。
 2. **若修改额度计算 / 登录状态机**：

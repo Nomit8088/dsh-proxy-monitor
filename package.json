@@ -66,7 +66,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:client": "tsdown",
-    "test": "node scripts/test-frame.mjs && node scripts/test-transition.mjs && node scripts/test-accounts.mjs && node scripts/test-grok-account.mjs && node scripts/test-codex-account.mjs && node scripts/test-antigravity-account.mjs && node scripts/test-antigravity-models.mjs && node scripts/test-catalog-preferences.mjs && node scripts/test-workbuddy-encrypted-auth.mjs",
+    "test": "node scripts/test-frame.mjs && node scripts/test-transition.mjs && node scripts/test-accounts.mjs && node scripts/test-grok-account.mjs && node scripts/test-codex-account.mjs && node scripts/test-antigravity-account.mjs && node scripts/test-antigravity-models.mjs && node scripts/test-catalog-preferences.mjs && node scripts/test-workbuddy-encrypted-auth.mjs && node scripts/test-workbuddy-catalog.mjs",
     "probe": "node scripts/probe.mjs",
     "inspect:css": "node scripts/inspect-css.mjs",
     "preview:shape": "node scripts/preview-shape.mjs",

@@ -24,6 +24,43 @@ DSH 模型选择器只认 `ctx.llm.adapters` 里该路由的 `listModels` / `res
 
 Profile 里若还装着 `dsh-codex` 等旧包，它们会先占路由。必须走 `installOrTakeOverAdapter` 或 `wrapAdapterCatalog`（见 `ARCHITECTURE.md` §4），否则设置页再完整，选择器仍是旧目录。
 
+### 1.1 选择器的答案可以直接问（诊断端点）
+
+```sh
+curl http://127.0.0.1:3080/plugins/dsh-proxy-monitor/picker/models
+# ?provider=workbuddy 只看一家
+```
+
+它调用的是选择器自己用的两个公开方法（`llm.listProviders()` → `llm.listModels(id)`），所以返回的就是选择器的答案，
+并把**注册失败**也一并列出（`setup` 数组），而不是像往常那样只留在宿主日志里。
+
+「设置页有、选择器没有」这类问题先跑这一条：`providers` 里没有那家 ⇒ **adapter 根本没注册**，
+和偏好、目录、CSS 都无关；有那家但模型少 ⇒ 才是过滤/偏好问题。
+
+### 1.2 合并进来的运行时：宿主插件的 `inject` 必须补全
+
+**这是 `workbuddy` 曾经掉出选择器的真实原因。** 原 `dsh-workbuddy-connect` 自己声明 `inject = ["llm"]`；
+合并进本插件后，宿主用的是 `src/index.ts` 的 `export const inject`，当时是 `['settings', 'connection']` —— 少了 `llm`。
+cordis 于是拒绝属性访问：
+
+```
+cannot get property "llm" without inject
+```
+
+vendored `startVariant()` 自己 `try/catch` 住这条异常并 `return false`（它以为只是"这次没起来"），
+结果就是：**设置页照常有 WorkBuddy（配置目录在），选择器里一台都没有**，且宿主日志之外没有任何提示。
+
+铁律：搬进来的运行时若**直接**访问 `ctx.<service>`（不是 `ctx.inject([...], cb)`），
+那个 service 必须出现在宿主插件的 `inject` 里。加完请用 §1.1 的诊断端点确认 `providers` 里出现了它。
+
+### 1.3 一份偏好文件，而不是两份
+
+WorkBuddy 的启用/图像偏好只有一份：`~/.dsh/.workbuddy-user-catalog.json`
+（`src/catalog-http.ts` 的 `WORKBUDDY_PREFS_FILENAME` ≡ vendored `WORKBUDDY_USER_CATALOG_FILENAME`）。
+曾经设置页写 `storages/workbuddy-model-settings.json`、adapter 读前者，于是勾选落在 A、选择器按 B 过滤 —— 同一个坑的另一半。
+`scripts/test-workbuddy-catalog.mjs` 用源码文本断言盯着这条等式，并且**禁止 vendored 读取带进程级缓存**
+（缓存会让"谁写谁读不是同一个模块实例"时的写入永久不可见）。
+
 ---
 
 ## 2. HTTP 契约
@@ -36,6 +73,7 @@ Profile 里若还装着 `dsh-codex` 等旧包，它们会先占路由。必须�
 | Grok | `/plugins/dsh-proxy-monitor/grok/models` | Grok 活体 catalog + pi-ai `xai` 模板 |
 | WorkBuddy | `/plugins/dsh-proxy-monitor/workbuddy/models` | leftover `/plugins/dsh-workbuddy-connect/status`；刷新走 `POST .../probe` `{action:"refresh"}` + `x-workbuddy-probe-key` |
 | Antigravity | `/antigravity/api/models` | 账号 available models；硬编码 `MODELS` 只当族模板，未出现在 payload 的族不得注入 |
+| **选择器诊断** | `/plugins/dsh-proxy-monitor/picker/models` | `llm.listProviders()` + `llm.listModels(id)`，外加各 provider 的注册结果（§1.1） |
 
 ### 2.1 信封
 
@@ -106,7 +144,7 @@ DSH 的 `projectImagesForTextModel` 在「定义了 `inputModalities` 且不含 
 | Codex | 自有 adapter：静态 gpt-6 补丁 ∪ 活体 merge → 按 enabled 过滤 → overlay image |
 | Grok | `GrokAuthAdapter` 读 `GrokModelSettingsStore` 的 `visibleModelIds` / `imageModelIds` |
 | Antigravity | `AntigravityAdapter` + `FileModelSettingsStore`（与 `/antigravity/api/models` 同一文件） |
-| WorkBuddy | 不换 stream；`wrapAdapterCatalog` + `overlayWorkBuddyAdapterModels` |
+| WorkBuddy | 不换 stream；vendored adapter 自己按偏好过滤，本插件再叠一层 `wrapAdapterCatalog` + `overlayWorkBuddyAdapterModels`（同一份偏好文件，见 §1.3）；`overlay` 在 `llm/adapters-updated` 上重挂，因此晚一步注册的 adapter 也会被覆盖 |
 
 `listModels` 只返回 **enabled** 的模型。`resolveModel` 对已启用的 id 仍要能解析，并带上当前图像 modalities。
 
@@ -124,6 +162,8 @@ Codex 活体需要 OAuth access + `accountId`。没签过到 `/codex/models` 的
 
 ## 6. 验收
 
+0. **先问选择器本人**：`GET /plugins/dsh-proxy-monitor/picker/models` —— 要验的那家必须在 `providers` 里，
+   `setup` 里它的 `route` 必须是 `ok: true`。这一条不过，后面五条都不必看（adapter 没注册）。
 1. 设置页「刷新模型」后列表与账号一致，不是写死表。
 2. 取消勾选 → 重新打开对话模型选择器 → 该项消失。
 3. 勾选「支持图像」→ 对该模型发带图消息 → DSH **不**把图投影成文本。

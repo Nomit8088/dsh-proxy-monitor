@@ -1,3 +1,4 @@
+import { recordSetupOutcome, reasonText } from "../diagnostics.js";
 import { A as parseModelCatalog, B as fallbackChatIdentity, C as desktopAuthCandidatesFor, D as classifyUpstreamError, E as WorkBuddyUpstreamClient, F as probeModel, G as appUserAgent, H as resolveChatIdentity, I as randomSentinel, J as resolveAppVersion, K as installedAppVersion, L as CN_APP_VERSION_FILENAME, M as prepareInternationalChatBody, N as regionOf, O as modelWithCurrentPromotion, P as PROBE_EFFORT_CANDIDATES, R as FALLBACK_CN_APP_VERSION, S as defaultDesktopAuthPath, T as workbuddyOwnAuthPath, U as validCliVersion, V as readCliVersion, W as WORKBUDDY_APP_VERSION_FILENAME, Y as validAppVersion, _ as WorkBuddyCatalog, a as WORKBUDDY_HOST_HEARTBEAT_FILENAME, b as WorkBuddyCredentialStore, c as processStartTimeMs, d as writeHostHeartbeat, f as WORKBUDDY_CONNECT_VERSION, g as FALLBACK_WORKBUDDY_MODELS, h as FALLBACK_WORKBUDDY_AI_MODELS, i as variantFor, j as prepareChatBody, k as normalizeCredits, l as readHostHeartbeat, n as CN_VARIANT, o as clearHostHeartbeat, q as readBundleVersion, r as WORKBUDDY_VARIANTS, s as isHeartbeatProcessAlive, t as AI_VARIANT, u as workbuddyHostHeartbeatPath, v as WORKBUDDY_AUTH_FILENAME, w as parseWorkBuddyAuth, x as defaultDesktopAuthCandidates, y as WORKBUDDY_AUTH_FILE_ENV, z as chatUserAgent } from "./variants-CExA7lJt.js";
 import z from "@deepseek-ai/schemastery";
 import { dirname, join, resolve } from "node:path";
@@ -48,29 +49,36 @@ function workbuddyCatalogPath(filename = WORKBUDDY_CATALOG_FILENAME) {
 /** User enable / image-support overlay, separate from the upstream roster. */
 const WORKBUDDY_USER_CATALOG_FILENAME = ".workbuddy-user-catalog.json";
 const WORKBUDDY_MODELS_PATH = "/plugins/dsh-proxy-monitor/workbuddy/models";
-let userCatalogCache;
 
 function workbuddyUserCatalogPath() {
 	return join(resolveDshHome(), WORKBUDDY_USER_CATALOG_FILENAME);
 }
 
+/**
+ * Read the user's enable / image overlay from disk — deliberately uncached.
+ *
+ * This module is loaded once per plugin *generation* (a hot reload imports a
+ * fresh copy), while the file is written by whichever generation currently owns
+ * the HTTP route and read by whichever generation currently owns the LLM
+ * adapter. A process-lifetime cache therefore pins one generation's snapshot
+ * and hides every later write: the settings page updates and the composer's
+ * model picker keeps the old list. The file is a couple of kilobytes and this
+ * runs per catalog read, not per token, so re-reading is the cheap fix.
+ */
 function readUserCatalog() {
-	if (userCatalogCache !== undefined) return userCatalogCache;
 	try {
 		const parsed = JSON.parse(readFileSync(workbuddyUserCatalogPath(), "utf8"));
-		userCatalogCache = {
+		return {
 			enabledModelIds: Array.isArray(parsed?.enabledModelIds) ? parsed.enabledModelIds.filter((id) => typeof id === "string") : undefined,
 			imageModelIds: Array.isArray(parsed?.imageModelIds) ? parsed.imageModelIds.filter((id) => typeof id === "string") : undefined,
 			catalogModels: Array.isArray(parsed?.catalogModels) ? parsed.catalogModels : [],
 		};
 	} catch {
-		userCatalogCache = { enabledModelIds: undefined, imageModelIds: undefined, catalogModels: [] };
+		return { enabledModelIds: undefined, imageModelIds: undefined, catalogModels: [] };
 	}
-	return userCatalogCache;
 }
 
 function writeUserCatalog(next) {
-	userCatalogCache = next;
 	const dir = dirname(workbuddyUserCatalogPath());
 	mkdirSync(dir, { recursive: true });
 	const temp = `${workbuddyUserCatalogPath()}.tmp`;
@@ -1578,6 +1586,7 @@ async function startVariant(ctx, runtime) {
 		await shim.ready;
 	} catch (error) {
 		ctx.logger.error(`dsh-workbuddy-connect: ${variant.displayName} loopback endpoint failed to start`, error);
+		recordSetupOutcome({ provider: variant.id, phase: `route`, ok: false, error: `loopback endpoint failed to start: ${reasonText(error)}` });
 		return false;
 	}
 	try {
@@ -1599,6 +1608,11 @@ async function startVariant(ctx, runtime) {
 		let releaseDirectory;
 		try {
 			releaseAdapter = ctx.llm.registerAdapter([variant.id], workbuddy.adapter);
+		} catch (error) {
+			recordSetupOutcome({ provider: variant.id, phase: `route`, ok: false, error: reasonText(error) });
+			throw error;
+		}
+		try {
 			releaseDirectory = ctx.llm.registerConfigurableProviders([{
 				provider: variant.id,
 				displayName: variant.displayName,
@@ -1606,11 +1620,20 @@ async function startVariant(ctx, runtime) {
 				settingsPath: [],
 				declared: false
 			}]);
-		} finally {
-			if (releaseAdapter === void 0 || releaseDirectory === void 0) {
-				releaseAdapter?.();
-				releaseDirectory?.();
-			}
+		} catch (error) {
+			// The directory feeds only the configuration surfaces (the settings
+			// card); the adapter is what the composer's model picker reads. A stale
+			// entry left by an earlier generation of this plugin must therefore not
+			// take the model route down with it. Releasing both halves together is
+			// what used to happen, and it left workbuddy listed in settings while
+			// missing from the picker until a full DSH restart.
+			recordSetupOutcome({
+				provider: variant.id,
+				phase: `route`,
+				ok: true,
+				note: `configurable-provider directory entry already present: ${reasonText(error)}`
+			});
+			ctx.logger.warn(`dsh-workbuddy-connect: ${variant.displayName} configurable-provider entry already present; keeping the adapter route`, error);
 		}
 		try {
 			ctx.effect(() => () => {
@@ -1623,10 +1646,12 @@ async function startVariant(ctx, runtime) {
 			releaseDirectory?.();
 			shim.close();
 		}
+		recordSetupOutcome({ provider: variant.id, phase: `route`, ok: true });
 		runtime.registered = true;
 		return true;
 	} catch (error) {
 		ctx.logger.error(`dsh-workbuddy-connect: ${variant.displayName} provider registration failed`, error);
+		recordSetupOutcome({ provider: variant.id, phase: `route`, ok: false, error: reasonText(error) });
 		shim.close();
 		return false;
 	}
@@ -1652,7 +1677,16 @@ function apply(ctx, config) {
 	* from a previous identity be discarded instead of overwriting a newer one.
 	*/
 	const lastIdentities = /* @__PURE__ */ new Map();
-	const runtimes = WORKBUDDY_VARIANTS.map((variant) => createVariantRuntime(config, variant, () => current(), (id) => lastIdentities.get(id)));
+	// CN variant only.
+	//
+	// The vendored runtime ships both the CN (workbuddy) and international
+	// (workbuddy-ai) variants, but this plugin exposes only the CN surface: the
+	// status/catalog/probe routes, the settings card, and the account row are all
+	// CN-only, and the enable/image preferences that filter a catalog are CN model
+	// ids. Booting the international variant anyway registered a second LLM route
+	// whose models were then filtered by CN preferences - a provider group with no
+	// models, no settings surface, and no way to configure it.
+	const runtimes = WORKBUDDY_VARIANTS.filter((variant) => variant.id === CN_VARIANT.id).map((variant) => createVariantRuntime(config, variant, () => current(), (id) => lastIdentities.get(id)));
 	const probeKey = createProbeKey();
 	/**
 	* Point a variant at an account identity, invalidating whatever the previous

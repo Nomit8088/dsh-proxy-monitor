@@ -42,6 +42,7 @@ import { setupCodex } from './codex-integration.js'
 import { setupAntigravity } from './antigravity-integration.js'
 import { setupWorkBuddy } from './workbuddy-integration.js'
 import { setupGrok } from './grok-integration.js'
+import { registerPickerModelsApi } from './catalog-http.js'
 import { AccountRegistry } from './accounts/registry.js'
 import type { ProxiedProviderId } from './accounts/contract.js'
 import { GrokAuthService } from './grok/grok-auth-service.js'
@@ -52,8 +53,19 @@ import { resolveDshHome } from './home.js'
 
 export const name = '@dsh-external/dsh-proxy-monitor'
 
-/** Required Host services: provider configuration and the browser transport. */
-export const inject = ['settings', 'connection']
+/**
+ * Required Host services: provider configuration, the browser transport, and
+ * the LLM registry.
+ *
+ * `llm` is not optional here even though most of this plugin reaches the
+ * registry through a nested `ctx.inject(['llm'], …)`: the WorkBuddy runtime is
+ * vendored whole and touches `ctx.llm` directly, so the *plugin's* inject list
+ * is what decides whether its route may register at all. Omitting it made cordis
+ * refuse the property access ("cannot get property \"llm\" without inject"),
+ * which the vendored code catches and logs — leaving WorkBuddy selectable in
+ * settings and absent from the composer's model picker.
+ */
+export const inject = ['settings', 'connection', 'llm']
 
 /** The provider ids the settings schema accepts, derived from the readers. */
 const PROVIDER_IDS = PROVIDER_ORDER as readonly string[]
@@ -253,6 +265,11 @@ export function apply(ctx: Context, config: Config): void {
 
   // Grok LLM adapter (when free) + live model catalog:
   setupGrok(ctx, grokService)
+
+  // Read-only diagnosis of what the conversation model picker can actually
+  // select. Registered after every adapter setup so it reports the topology the
+  // user ends up with, not an intermediate one.
+  registerPickerModelsApi(ctx)
 
   const accounts = new AccountRegistry([
     new CodexAccountAdapter(codex.credentials, codex.webAuth, async () => await collector.snapshot()),
