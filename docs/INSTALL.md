@@ -53,13 +53,21 @@ dsh plugin --profile web add git+https://gh-proxy.com/https://github.com/Nomit80
 
 ## 3. 方式 B：Release 预打包 tgz
 
-每次打 tag，CI 都会把仓库（含已入库的 `lib/`）打成 npm 包并作为 Release 附件发布。直接装附件：
+每个 tag 都会在 Release 里挂一个预打包的 npm 包（仓库自带 `.github/workflows/release.yml`：校验产物在 → `npm pack` → 挂附件）。
+直接装附件：
 
 ```sh
 dsh plugin --profile web add https://github.com/Nomit8088/dsh-proxy-monitor/releases/download/v0.1.0/dsh-external-dsh-proxy-monitor-0.1.0.tgz
 ```
 
 这是最"钝"的一种：不碰 git、不需要 registry、产物可校验（Release 页有 shasum）。
+
+不用 CI 也能发同样的产物（本地等价命令）：
+
+```sh
+npm pack
+gh release create v0.1.0 ./dsh-external-dsh-proxy-monitor-0.1.0.tgz --title v0.1.0 --generate-notes
+```
 
 > tgz 文件名由 npm 生成：`@scope/name` → `scope-name-<version>.tgz`（去掉 `@`、`/` 换成 `-`）。
 > 本包即 `dsh-external-dsh-proxy-monitor-<version>.tgz`。
@@ -185,8 +193,11 @@ dsh plugin --profile web remove dsh-codex dsh-grok-auth dsh-antigravity dsh-work
    两种结果都很难诊断（插件装上了却没产物）。
 3. 于是本包**不声明 `prepare`**，仓库里直接带一份可加载的产物。
 
-维护者纪律：**每次发版前跑 `node scripts/build.mjs` 并提交 `lib/`**。CI 的 Release 流程只做"校验产物在 → 打包 → 发布"，
-不在 CI 里构建（CI runner 上没有 DSH 类型面）。
+维护者纪律：**每次发版前跑 `node scripts/build.mjs` 并提交 `lib/`**。发布流程只做"校验产物在 → 打包 → 挂 Release 附件"
+（`.github/workflows/release.yml`，或在本地跑 §3 的两条命令），**任何地方都不重新构建** —— CI runner 上没有 DSH 类型面。
+
+> 推送凭据需要 `workflow` scope 才能提交 `.github/workflows/*`。若被 GitHub 拒绝（`refusing to allow an OAuth App to create or update workflow`），
+> 先 `gh auth refresh -h github.com -s workflow`，或在 GitHub 网页上直接创建该文件。
 
 ## 11. 自己构建（改代码 / 自建 fork）
 
