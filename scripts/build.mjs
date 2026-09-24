@@ -95,6 +95,10 @@ run('Testing antigravity models', join(ROOT, 'scripts', 'test-antigravity-models
 run('Testing catalog preferences', join(ROOT, 'scripts', 'test-catalog-preferences.mjs'), [])
 run('Testing workbuddy encrypted auth', join(ROOT, 'scripts', 'test-workbuddy-encrypted-auth.mjs'), [])
 run('Testing workbuddy catalog single source', join(ROOT, 'scripts', 'test-workbuddy-catalog.mjs'), [])
+// Startup guard: a package loaded by both the profile's static bundles and the
+// super-injector registry registers its settings namespace twice, and dsh-settings
+// throws on the second — failing the whole plugin tree and crashing `dsh web`.
+run('Verifying single-load composition', join(ROOT, 'scripts', 'verify-single-load.mjs'), [])
 run('Verifying rail silhouette', join(ROOT, 'scripts', 'preview-shape.mjs'), [])
 run('Bundling client (tsdown)', TSDOWN, ['-c', 'tsdown.config.ts'])
 run('Inspecting bundle CSS', join(ROOT, 'scripts', 'inspect-css.mjs'), [])
