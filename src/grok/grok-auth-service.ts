@@ -908,7 +908,7 @@ async function probeUsage(
       authorization: `Bearer ${credential.accessToken}`,
       'x-xai-token-auth': GROK_USAGE_TOKEN_HEADER,
       accept: 'application/json',
-      'user-agent': 'dsh-grok-auth/0.1.0',
+      'user-agent': 'dsh-grok-auth/0.2.0',
     },
     signal,
   })

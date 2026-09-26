@@ -113,7 +113,7 @@ export async function readGrok(ctx: ProviderContext): Promise<ProviderQuota> {
         authorization: `Bearer ${token}`,
         'x-xai-token-auth': USAGE_TOKEN_HEADER,
         accept: 'application/json',
-        'user-agent': 'dsh-proxy-monitor/0.1.0',
+        'user-agent': 'dsh-proxy-monitor/0.2.0',
       },
     })
     if (!isRecord(payload)) throw new Error('malformed billing response')
