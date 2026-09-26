@@ -8,8 +8,20 @@
  * @module @dsh-external/dsh-proxy-monitor/contract
  */
 
-/** Logical Connection RPC channel owned by this plugin's Host half. */
-export const PROXY_MONITOR_CHANNEL = '/proxy-monitor'
+/**
+ * Browser-facing route carrying this plugin's own endpoints.
+ *
+ * These are exact Fetch routes on Connection's shared, authenticated `/api`
+ * channel (`connection.fetch.register`), the same mechanism the shipped file
+ * and upload routes use. Connection's per-plugin `rpc.handle(channel, …)` is
+ * *not* usable in this DSH generation: its implementation registers the channel
+ * through `owner.webServer`, and that access fails inside the service no matter
+ * which services the caller injects, so no route is ever mounted (the browser
+ * sees `HTTP 405`). A plugin-owned route on the shared channel gets the platform
+ * Host/Origin fence and browser authentication for free, so the endpoints below
+ * are reached with one ordinary same-origin POST each.
+ */
+export const PROXY_MONITOR_ROUTE = '/api/proxy-monitor'
 
 /**
  * Loader entry id of this plugin, and with it the identity of its settings.
@@ -99,27 +111,31 @@ export interface RefreshResult {
 }
 
 /**
- * Endpoints the browser may call on the plugin's Connection RPC channel.
+ * Every endpoint the browser may call on this plugin's route, in one tuple.
  *
- * Listed as one union so the Host dispatcher and the browser caller cannot
- * drift: answering an endpoint not named here, or asking for one, is a type
- * error rather than a runtime 404.
+ * The Host registers one exact route per member and the browser caller posts to
+ * one member, so answering an endpoint not named here, or asking for one, is a
+ * type error rather than a runtime 404.
  *
  * The four account endpoints arrived with the reverse-proxy merge. They are
  * separate from `snapshot`/`refresh` because they act on one provider's session
  * rather than on the whole snapshot — a login must be pollable without forcing
  * a quota re-read of every other provider.
  */
-export type ProxyMonitorEndpoint =
+export const PROXY_MONITOR_ENDPOINTS = [
   /** Read the cached quota snapshot, refreshing upstream only when stale. */
-  | 'snapshot'
+  'snapshot',
   /** Force a re-read of every provider's quota. */
-  | 'refresh'
+  'refresh',
   /** Read every proxied provider's account state (identity facts only). */
-  | 'accounts'
+  'accounts',
   /** Start a login for one provider; payload `{ id }`. */
-  | 'login'
+  'login',
   /** Poll one login attempt; payload `{ id, ticketId }`. */
-  | 'loginPoll'
+  'loginPoll',
   /** End one provider's session; payload `{ id }`. */
-  | 'logout'
+  'logout',
+] as const
+
+/** Endpoints the browser may call on this plugin's route. */
+export type ProxyMonitorEndpoint = (typeof PROXY_MONITOR_ENDPOINTS)[number]

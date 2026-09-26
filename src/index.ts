@@ -34,8 +34,10 @@ import type {} from '@deepseek-ai/cordis-plugin-loader'
 
 import { QuotaCollector, PROVIDER_ORDER } from './collector.js'
 import {
-  PROXY_MONITOR_CHANNEL,
+  PROXY_MONITOR_ENDPOINTS,
+  PROXY_MONITOR_ROUTE,
   type ProviderId,
+  type ProxyMonitorEndpoint,
   type RefreshResult,
 } from './contract.js'
 import { createQuotaBackedAdapters } from './accounts/adapters.js'
@@ -167,12 +169,31 @@ export const Config = z.object({
     .volatile(),
 })
 
-/** One `bad-request` failure in the Connection RPC result shape. */
+/** One `bad-request` failure in the browser-facing result shape. */
 function badRequest(message: string): {
   ok: false
   error: { code: string; message: string; details: object }
 } {
   return { ok: false, error: { code: 'bad-request', message, details: { issues: [] } } }
+}
+
+/**
+ * One browser-facing reply.
+ *
+ * A refusal is data, never a transport status: the caller already passed
+ * Connection's authentication, and the browser half renders the message it gets
+ * back, so both ends share this one shape.
+ */
+type ProxyMonitorReply =
+  | { ok: true; value: unknown }
+  | { ok: false; error: { code: string; message: string; details: object } }
+
+/** Wrap one reply in the JSON response the browser caller reads. */
+function respond(reply: ProxyMonitorReply): Response {
+  return new Response(JSON.stringify(reply), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  })
 }
 
 /** The proxied provider ids the account endpoints accept. */
@@ -367,70 +388,112 @@ export function apply(ctx: Context, config: Config): void {
     )
   })
 
+  /**
+   * Dispatch one browser request and answer with the envelope the browser
+   * caller unwraps.
+   *
+   * A refusal (bad payload, unknown provider) is data rather than an HTTP
+   * status: the transport already proved the caller is the operator, and the
+   * browser half renders the message, so the two ends share one result shape.
+   * @param endpoint - one of the plugin's declared endpoints.
+   * @param payload - validated object payload, or undefined when none was sent.
+   * @param signal - request cancellation, aborted when the browser disconnects.
+   * @returns the value or the refusal to hand back to the browser.
+   */
+  const handleEndpoint = async (
+    endpoint: ProxyMonitorEndpoint,
+    payload: object | undefined,
+    signal: AbortSignal,
+  ): Promise<ProxyMonitorReply> => {
+    try {
+      if (endpoint === 'snapshot') {
+        if (signal.aborted) throw new Error('request was cancelled')
+        return { ok: true as const, value: await collector.snapshot() }
+      }
+      if (endpoint === 'refresh') {
+        const snapshot = await collector.refresh()
+        const result: RefreshResult = {
+          snapshot,
+          failed: snapshot.providers
+            .filter(provider => provider.status === 'error')
+            .map(provider => provider.id),
+        }
+        return { ok: true as const, value: result }
+      }
+
+      // Account endpoints. Each acts on one provider's session, which is
+      // why they are separate from the snapshot pair above: a login must
+      // be pollable without forcing a quota re-read of every provider.
+      if (endpoint === 'accounts') {
+        if (signal.aborted) throw new Error('request was cancelled')
+        return { ok: true as const, value: await accounts.accounts() }
+      }
+      if (endpoint === 'login' || endpoint === 'logout') {
+        const provider = providerOf(payload)
+        if (provider === undefined) return badRequest('payload.id must name a proxied provider')
+        if (endpoint === 'logout') {
+          return { ok: true as const, value: { ok: await accounts.logout(provider) } }
+        }
+        const ticket = await accounts.beginLogin(provider)
+        if (ticket === undefined) {
+          return badRequest(`${provider} has no login flow in this build`)
+        }
+        return { ok: true as const, value: ticket }
+      }
+      const provider = providerOf(payload)
+      if (provider === undefined) return badRequest('payload.id must name a proxied provider')
+      const ticketId = strField(payload, 'ticketId')
+      if (ticketId === undefined) return badRequest('payload.ticketId is required')
+      const ticket = await accounts.pollLogin(provider, ticketId)
+      if (ticket === undefined) {
+        return badRequest(`${provider} has no login flow in this build`)
+      }
+      return { ok: true as const, value: ticket }
+    } catch (error) {
+      return { ok: false as const, error: { code: 'internal', message: reasonOf(error), details: {} } }
+    }
+  }
+
+  /**
+   * This plugin's browser transport: one exact POST route per endpoint on
+   * Connection's shared, authenticated `/api` channel.
+   *
+   * `connection.fetch.register` is the shared channel's supported contribution
+   * point — the shipped file and upload routes use it too — and it is what
+   * replaces the per-plugin `rpc.handle` channel this plugin used before the
+   * 0.1.7 port: that call cannot mount a route in this generation at all (see
+   * `contract.ts`). Routing through `/api` also means the platform applies its
+   * Host/Origin fence and browser authentication before this code runs, and the
+   * plugin gets the same protection the built-in APIs have.
+   *
+   * Registered from an optional child so a profile with no browser surface — a
+   * headless or TUI run — still mounts the collector and every provider.
+   */
   ctx.inject(['connection'], connectionCtx => {
-    // The channel registration is scoped to the calling fiber by the service
-    // proxy, and the returned disposer is wired through ctx.effect so an unload
-    // (or a hot reload) always removes the route.
-    connectionCtx.effect(
-      () =>
-        connectionCtx.connection.rpc.handle(PROXY_MONITOR_CHANNEL, async (endpoint, payload, signal) => {
-          if (payload !== undefined && (typeof payload !== 'object' || payload === null || Array.isArray(payload))) {
-            return badRequest('payload must be an object')
-          }
-          try {
-            if (endpoint === 'snapshot') {
-              if (signal.aborted) throw new Error('request was cancelled')
-              return { ok: true as const, value: await collector.snapshot() }
+    connectionCtx.effect(() => {
+      const disposers = PROXY_MONITOR_ENDPOINTS.map(endpoint =>
+        connectionCtx.connection.fetch.register({
+          path: `${PROXY_MONITOR_ROUTE}/${endpoint}`,
+          methods: ['POST'],
+          requestBody: 'buffered',
+          fetch: async request => {
+            let payload: unknown
+            try {
+              payload = await request.json()
+            } catch {
+              return respond(badRequest('payload must be a JSON body'))
             }
-            if (endpoint === 'refresh') {
-              const snapshot = await collector.refresh()
-              const result: RefreshResult = {
-                snapshot,
-                failed: snapshot.providers
-                  .filter(provider => provider.status === 'error')
-                  .map(provider => provider.id),
-              }
-              return { ok: true as const, value: result }
+            if (payload !== undefined && (typeof payload !== 'object' || payload === null || Array.isArray(payload))) {
+              return respond(badRequest('payload must be an object'))
             }
-
-            // Account endpoints. Each acts on one provider's session, which is
-            // why they are separate from the snapshot pair above: a login must
-            // be pollable without forcing a quota re-read of every provider.
-            if (endpoint === 'accounts') {
-              if (signal.aborted) throw new Error('request was cancelled')
-              return { ok: true as const, value: await accounts.accounts() }
-            }
-            if (endpoint === 'login' || endpoint === 'logout') {
-              const provider = providerOf(payload)
-              if (provider === undefined) return badRequest('payload.id must name a proxied provider')
-              if (endpoint === 'logout') {
-                return { ok: true as const, value: { ok: await accounts.logout(provider) } }
-              }
-              const ticket = await accounts.beginLogin(provider)
-              if (ticket === undefined) {
-                return badRequest(`${provider} has no login flow in this build`)
-              }
-              return { ok: true as const, value: ticket }
-            }
-            if (endpoint === 'loginPoll') {
-              const provider = providerOf(payload)
-              if (provider === undefined) return badRequest('payload.id must name a proxied provider')
-              const ticketId = strField(payload, 'ticketId')
-              if (ticketId === undefined) return badRequest('payload.ticketId is required')
-              const ticket = await accounts.pollLogin(provider, ticketId)
-              if (ticket === undefined) {
-                return badRequest(`${provider} has no login flow in this build`)
-              }
-              return { ok: true as const, value: ticket }
-            }
-
-            return badRequest(`unknown dsh-proxy-monitor endpoint ${JSON.stringify(endpoint)}`)
-          } catch (error) {
-            return { ok: false as const, error: { code: 'internal', message: reasonOf(error), details: {} } }
-          }
+            return respond(await handleEndpoint(endpoint, payload as object | undefined, request.signal))
+          },
         }),
-      'dsh-proxy-monitor: rpc channel',
-    )
+      )
+      return () => {
+        for (const disposer of disposers) void disposer()
+      }
+    }, 'dsh-proxy-monitor: browser transport')
   })
 
   ctx.logger.info(

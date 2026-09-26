@@ -21,18 +21,16 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 
-// Type-only imports: declaration merging for `ctx.connection` and the settings
-// seam's `ctx.configForms`, plus the slot contracts this plugin registers into.
-// (The slots registry itself and its `ctx.slots` member are declared by the
-// renderer package, and this half reaches the registry through the narrow
-// hand-rolled context interface below. DSH 0.1.7 removed
-// `@deepseek-ai/dsh-client-runtime`, which used to hold both the browser context
-// alias and the settings scope.)
+// Type-only imports: declaration merging for the settings seam's
+// `ctx.configForms`, plus the slot contracts this plugin registers into. (The
+// slots registry itself and its `ctx.slots` member are declared by the renderer
+// package, and this half reaches the registry through the narrow hand-rolled
+// context interface below. DSH 0.1.7 removed `@deepseek-ai/dsh-client-runtime`,
+// which used to hold both the browser context alias and the settings scope.)
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import type {} from '@deepseek-ai/dsh-client-connection/client'
 
 import { PROXY_MONITOR_ENTRY, type QuotaSnapshot } from '../contract.js'
-import { createQuotaBroker, type QuotaBroker } from './api.js'
+import { createProxyMonitorTransport, createQuotaBroker, type QuotaBroker } from './api.js'
 import { AccountStore } from './accounts/store.js'
 import { SectionShell, type ProviderTab } from './accounts/SectionShell.js'
 import { useAccounts } from './accounts/useAccounts.js'
@@ -47,8 +45,12 @@ import { ProxyMonitorSettings, type PluginSettings, type SettingsFace } from './
  * `configForms` is the settings domain's client-side form service: the form for
  * the `dsh-proxy-monitor` entry is what carries this plugin's options, so the
  * rail and the settings section always read and write the same values.
+ *
+ * There is no `connection` here: this plugin's Host routes are exact POST routes
+ * on Connection's shared `/api` channel, reached with a plain same-origin
+ * `fetch` (see `api.ts`), so the browser half needs no RPC client.
  */
-export const inject = ['slots', 'configForms', 'connection']
+export const inject = ['slots', 'configForms']
 
 /** The settings section's position in the Settings nav. */
 const SETTINGS_ORDER = 40
@@ -83,7 +85,6 @@ interface PluginContext {
     inject(key: string, callback: () => (() => void) | Iterable<() => void>): () => void
     register(options: Record<string, unknown>, component: unknown): () => void
   }
-  connection: { rpc: Parameters<typeof createQuotaBroker>[0] }
   effect(callback: () => (() => void) | void, label?: string): () => void
 }
 
@@ -309,7 +310,7 @@ function ProxyAccountsSection({ accounts, broker }: {
  */
 export function apply(ctx: Context): void {
   const context = ctx as unknown as PluginContext
-  const broker = createQuotaBroker(context.connection.rpc)
+  const broker = createQuotaBroker(createProxyMonitorTransport())
   // One form for the whole plugin, keyed by the Host entry id: the seam
   // projects exactly that entry's volatile Config fields, so the settings
   // section below writes the same object this half reads for the rail.

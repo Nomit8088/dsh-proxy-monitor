@@ -18,8 +18,8 @@ DeepSeek、Claude 只进额度采集，不进反代账户层——本插件不�
 
 | 平面 | 入口 | 允许接触 | 禁止 |
 | --- | --- | --- | --- |
-| Host | `src/index.ts` `apply` | 凭证、上游 HTTP、`ctx.llm`、webServer 路由、Connection RPC | 浏览器包、`window` |
-| Client | `src/client/index.tsx` | slots、`configForms` 表单、Connection RPC、本插件 HTTP | 凭证、Node API、未注册的 `@deepseek-ai/*` require |
+| Host | `src/index.ts` `apply` | 凭证、上游 HTTP、`ctx.llm`、webServer 路由、`/api` 路由 | 浏览器包、`window` |
+| Client | `src/client/index.tsx` | slots、`configForms` 表单、本插件 `/api/proxy-monitor/*` 路由 | 凭证、Node API、未注册的 `@deepseek-ai/*` require |
 
 浏览器半只收**无密钥的值**：账户身份、额度百分比、登录指引（URL / 设备码）。令牌出现在 client 是适配器的 bug。
 
@@ -48,7 +48,10 @@ Client 打包走 `tsdown` → `lib/client.js`。平台依赖必须写在 `packag
 2. 建 `QuotaCollector`（可对 Grok 等注入 `overrides`，走持锁的认证服务而不是第二套文件读取）。
 3. 建 `AccountRegistry`，挂四个 `AccountAdapter`。
 4. `setupCodex` / `setupAntigravity` / `setupWorkBuddy` / `setupGrok`：LLM 路由 + 目录 HTTP + 各家专属能力。
-5. Connection RPC：浏览器只经此通道拿额度快照与账户动作。
+5. 浏览器通道：`connection.fetch.register` 在共享的 `/api` 通道上按 endpoint 注册 exact 路由（`/api/proxy-monitor/*`），
+   平台先做 Host/Origin 与浏览器鉴权；浏览器半只经这些路由拿额度快照与账户动作。
+   **不要用** `connection.rpc.handle`：0.1.7 里它内部访问 `owner.webServer`，无论调用方 inject 什么都取不到，
+   最终不会挂上任何路由，浏览器只会看到 HTTP 405（`/api/file`、文件上传走的就是 fetch 路由）。
 
 Codex / WorkBuddy 的**偏好**不再进设置文档：它们的结构随活体模型目录变化（0.1.7 的 entry 表单只表达固定 schema），
 改为落在 `$DSH_HOME/storages/` 下的插件自有 JSON（`openai-codex-preferences.json`，与 `grok-model-settings.json` 同一套写法）。

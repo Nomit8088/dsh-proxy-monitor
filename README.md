@@ -221,11 +221,11 @@ Host 侧 (src/index.ts)                      Browser 侧 (src/client/)
 │   dsh-proxy-monitor (live)   │            │   · 圆环 + 详情卡          │
 │                              │            │   · frame.ts 读几何避让    │
 │ QuotaCollector               │            │                           │
-│   ├ deepseek.ts              │  RPC       │ settings.section          │
+│   ├ deepseek.ts              │  POST      │ settings.section          │
 │   ├ codex.ts                 │◄──────────►│   ── ProxyMonitorSettings │
-│   ├ workbuddy.ts             │ /proxy-    │                           │
-│   ├ antigravity.ts           │ monitor    │ api.ts  ── 调用 RPC        │
-│   ├ grok.ts                  │            │                           │
+│   ├ workbuddy.ts             │ /api/      │                           │
+│   ├ antigravity.ts           │ proxy-     │ api.ts  ── fetch 调用      │
+│   ├ grok.ts                  │ monitor/*  │                           │
 │   └ claude.ts                │            │ 轮询：可见时按间隔拉取      │
 │   （并发、隔离失败、带缓存）    │            │ 隐藏标签页不轮询            │
 └──────────────────────────────┘            └───────────────────────────┘
@@ -249,7 +249,7 @@ src/
   geometry.ts              # 纯几何：面板宽度 → 侧栏偏移；轮次导航条的让位量（可真测）
   home.ts                  # DSH_HOME 解析
   collector.ts             # 并发采集 + 缓存 + 合流
-  index.ts                 # Host：entry 配置（volatile）+ RPC 通道 + collector
+  index.ts                 # Host：entry 配置（volatile）+ /api 路由 + collector
   providers/
     util.ts                # 有界 HTTP、形状探测、百分比/时间归一
     deepseek.ts codex.ts workbuddy.ts antigravity.ts grok.ts claude.ts
@@ -259,7 +259,7 @@ src/
     Settings.tsx/.module.css    # 设置页
     frame.ts               # DOM 量测：ResizeObserver + 结构变更 → geometry.ts
     turnnav.ts             # 找到 ui-chat 的轮次导航条并让它向左避让
-    api.ts                 # RPC 调用 + 错误解包
+    api.ts                 # /api/proxy-monitor/* 调用 + 错误解包
     icons.tsx              # 6 个提供商标记（currentColor）
 scripts/
   build.mjs                # 一键构建：链接类型 → tsc → 三个测试 → tsdown → CSS 审计
