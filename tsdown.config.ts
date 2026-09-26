@@ -38,6 +38,9 @@ const PLUGIN_ID = '@dsh-external/dsh-proxy-monitor'
  *   require it directly. The merged Grok settings card does exactly that.
  * - **`@deepseek-ai/cordis` is the seeded spelling**, not `cordis`; a bare
  *   `cordis` is not a table word and would throw at materialization.
+ *
+ * DSH 0.1.7 dropped `@deepseek-ai/dsh-client-runtime` from the table (and from
+ * the platform) and added the client store; this list is the 0.1.7 table.
  */
 const CLIENT_SEED = [
   'react',
@@ -45,8 +48,10 @@ const CLIENT_SEED = [
   'react-dom',
   'react-dom/client',
   '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-client-store',
   '@deepseek-ai/dsh-client-ui-slots',
   '@deepseek-ai/dsh-client-ui-primitives',
+  '@deepseek-ai/dsh-client-ui-dockkit',
 ]
 
 /**
@@ -61,7 +66,6 @@ const CLIENT_SEED = [
  * registered" crash, not a build error.
  */
 const CLIENT_GRAPH = [
-  '@deepseek-ai/dsh-client-runtime',
   '@deepseek-ai/dsh-client-connection',
   '@deepseek-ai/dsh-client-locale',
   '@deepseek-ai/dsh-client-ui-settings',

@@ -4,8 +4,17 @@ import { fileURLToPath } from 'node:url'
 
 export const COMPATIBILITY_SCHEMA_VERSION = 1 as const
 export const SUPPORTED_NODE_RANGE = '^22.19.0 || >=24.0.0'
-export const SUPPORTED_DSH_PLUGIN_API_VERSION = '0.1.1-rc.2'
-export const SUPPORTED_PI_AI_VERSION = '0.84.4'
+/**
+ * Plugin-API generation this build is written against.
+ *
+ * Bumped with the 0.1.7 port: the settings seam that used to expose
+ * `register(ns, schema)` was replaced by entry-keyed Config forms, and the
+ * browser platform dropped `@deepseek-ai/dsh-client-runtime`. This constant is
+ * the one place the diagnostic compares against, so it must name the generation
+ * the code actually targets rather than a version range.
+ */
+export const SUPPORTED_DSH_PLUGIN_API_VERSION = '0.1.7-rc.2'
+export const SUPPORTED_PI_AI_VERSION = '0.85.1'
 export const PI_AI_PACKAGE = '@earendil-works/pi-ai'
 
 export const DSH_PLUGIN_API_PACKAGES = [

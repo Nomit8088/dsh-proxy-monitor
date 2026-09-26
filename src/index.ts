@@ -3,9 +3,12 @@
  *
  * Mounts three things on the Host plane:
  *
- * 1. the `dsh-proxy-monitor` settings namespace, so the plugin's own options
- *    (which providers to show, where the rail sits, how often to poll) live in
- *    the user settings document beside every other plugin's;
+ * 1. the plugin's own options (which providers to show, where the rail sits,
+ *    how often to poll) as `.volatile()` fields of this plugin's Config. Since
+ *    DSH 0.1.7 the settings seam projects a plugin entry's volatile fields into
+ *    that entry's config form, so a write from the settings page lands in the
+ *    profile patch and the Loader commits the new values into these same
+ *    references — `loader/volatile-update` — without remounting the plugin;
  * 2. the quota collector, which reads each provider's own credential source
  *    and quota endpoint;
  * 3. a plugin-owned Connection RPC channel, the only transport by which quota
@@ -17,20 +20,21 @@
  * @module @dsh-external/dsh-proxy-monitor
  */
 
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context, Volatile } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 
 // Type-only imports: these pull in the declaration-merging augmentations that
-// put `ctx.settings`, `ctx.credentials`, and `ctx.connection` on Context. They
-// carry no runtime weight and are erased at compile time.
+// put `ctx.settings`, `ctx.credentials`, and `ctx.connection` on Context and
+// declare the `loader/volatile-update` event this half listens to. They carry
+// no runtime weight and are erased at compile time.
 import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-client-connection'
+import type {} from '@deepseek-ai/cordis-plugin-loader'
 
 import { QuotaCollector, PROVIDER_ORDER } from './collector.js'
 import {
   PROXY_MONITOR_CHANNEL,
-  PROXY_MONITOR_NAMESPACE,
   type ProviderId,
   type RefreshResult,
 } from './contract.js'
@@ -50,12 +54,12 @@ import { defaultAuthJsonPath } from './grok/grok-auth.js'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { reasonOf, type ProviderContext } from './providers/util.js'
 import { resolveDshHome } from './home.js'
+import { Config as WorkBuddyConfigSchema, type Config as WorkBuddySection } from './workbuddy/index.js'
 
 export const name = '@dsh-external/dsh-proxy-monitor'
 
 /**
- * Required Host services: provider configuration, the browser transport, and
- * the LLM registry.
+ * Required Host services: the LLM registry.
  *
  * `llm` is not optional here even though most of this plugin reaches the
  * registry through a nested `ctx.inject(['llm'], …)`: the WorkBuddy runtime is
@@ -64,69 +68,103 @@ export const name = '@dsh-external/dsh-proxy-monitor'
  * refuse the property access ("cannot get property \"llm\" without inject"),
  * which the vendored code catches and logs — leaving WorkBuddy selectable in
  * settings and absent from the composer's model picker.
+ *
+ * Neither `settings` nor `connection` is required:
+ *
+ * - `settings` no longer holds a plugin's configuration (0.1.7 projects the
+ *   entry's own volatile Config), so a deployment without the seam must still
+ *   get the rail, the collector, and the providers;
+ * - `connection` is the browser transport, and only the plugin-owned RPC
+ *   channel needs it. Requiring it kept the whole entry `pending (waiting for
+ *   service: connection)` in every profile with no Web surface — a headless or
+ *   TUI run would mount no collector at all.
+ *
+ * Both are therefore reached through optional `ctx.inject` children below.
  */
-export const inject = ['settings', 'connection', 'llm']
+export const inject = ['llm']
 
 /** The provider ids the settings schema accepts, derived from the readers. */
 const PROVIDER_IDS = PROVIDER_ORDER as readonly string[]
 
 /**
- * Plugin configuration. Every field has a default, so a bare `insert` row
- * mounts the plugin with no config at all.
+ * Plugin configuration.
+ *
+ * Every editable field is `.volatile()`, which is exactly what makes it visible
+ * to the settings seam: `dsh-settings` projects an entry's volatile fields into
+ * that entry's form, and the Loader keeps those same references live by writing
+ * committed values into them. A field left non-volatile would be ordinary
+ * composition configuration, editable only by hand in the profile patch.
+ *
+ * Declared as an interface of `Volatile<T>` fields beside the schema itself
+ * (the pattern the shipped plugins use): the schema is what the Loader reads,
+ * the interface is what `apply` receives.
  */
 export interface Config {
   /** Whether the floating rail is shown at all. */
-  enabled: boolean
+  enabled: Volatile<boolean>
   /** Providers to show, in the order given; others are read but not rendered. */
-  providers: string[]
+  providers: Volatile<string[]>
   /** Where the rail sits against the viewport edge. */
-  anchor: 'right' | 'left'
+  anchor: Volatile<'right' | 'left'>
   /** Vertical placement of the rail. */
-  align: 'center' | 'top' | 'bottom'
+  align: Volatile<'center' | 'top' | 'bottom'>
   /** Opacity of the rail when the pointer is away from it. */
-  restingOpacity: number
+  restingOpacity: Volatile<number>
   /** Whether the ring shows the numeric percentage under it. */
-  showPercent: boolean
+  showPercent: Volatile<boolean>
   /** Whether a ring may be expanded by hovering, or only by clicking. */
-  expandOnHover: boolean
+  expandOnHover: Volatile<boolean>
   /** How long a snapshot stays fresh before a background re-read, in seconds. */
-  refreshSeconds: number
+  refreshSeconds: Volatile<number>
   /** Order the rows by name instead of by the configured `providers` order. */
-  sortAlphabetically: boolean
+  sortAlphabetically: Volatile<boolean>
   /**
    * Whether the rail may shift DSH's own turn navigator aside when the two
    * would overlap. Only ever moves that navigator left by the overlap.
    */
-  yieldToTurnNav: boolean
+  yieldToTurnNav: Volatile<boolean>
+  /**
+   * The vendored WorkBuddy runtime's own fields, nested under this entry so a
+   * single configuration surface owns them and the configurable-provider
+   * directory can point at `workbuddy` inside this entry.
+   */
+  workbuddy: Volatile<WorkBuddySection>
 }
 
-export const Config: z<Config> = z.object({
-  enabled: z.boolean().default(true).description('显示额度监控侧栏'),
+export const Config = z.object({
+  enabled: z.boolean().default(true).description('显示额度监控侧栏').volatile(),
   providers: z
     .array(z.union(PROVIDER_IDS as [string, ...string[]]))
     .default(['deepseek', 'codex', 'workbuddy', 'antigravity', 'grok'])
-    .description('在侧栏中展示哪些提供商'),
-  anchor: z.union(['right', 'left']).default('right').description('侧栏贴靠的屏幕边缘'),
-  align: z.union(['center', 'top', 'bottom']).default('center').description('侧栏的垂直位置'),
+    .description('在侧栏中展示哪些提供商')
+    .volatile(),
+  anchor: z.union(['right', 'left']).default('right').description('侧栏贴靠的屏幕边缘').volatile(),
+  align: z.union(['center', 'top', 'bottom']).default('center').description('侧栏的垂直位置').volatile(),
   restingOpacity: z
     .natural()
     .min(0)
     .max(100)
     .default(82)
-    .description('未悬停时的透明度（%），越低越不干扰阅读'),
-  showPercent: z.boolean().default(true).description('在圆环下方显示百分比数字'),
-  expandOnHover: z.boolean().default(true).description('悬停即展开详情卡（关闭后需点击展开）'),
+    .description('未悬停时的透明度（%），越低越不干扰阅读')
+    .volatile(),
+  showPercent: z.boolean().default(true).description('在圆环下方显示百分比数字').volatile(),
+  expandOnHover: z.boolean().default(true).description('悬停即展开详情卡（关闭后需点击展开）').volatile(),
   refreshSeconds: z
     .natural()
     .min(15)
     .max(3600)
     .default(60)
-    .description('额度自动刷新间隔（秒），最小 15 秒'),
-  sortAlphabetically: z.boolean().default(false).description('按名称排序（关闭则按上面的提供商顺序）'),
+    .description('额度自动刷新间隔（秒），最小 15 秒')
+    .volatile(),
+  sortAlphabetically: z.boolean().default(false).description('按名称排序（关闭则按上面的提供商顺序）').volatile(),
   yieldToTurnNav: z
     .boolean()
     .default(true)
-    .description('与对话轮次导航条重叠时，把导航条向左让开（不改动本插件位置）'),
+    .description('与对话轮次导航条重叠时，把导航条向左让开（不改动本插件位置）')
+    .volatile(),
+  workbuddy: WorkBuddyConfigSchema.default({})
+    .description('WorkBuddy 桌面端凭据路径与推理档位探测授权')
+    .volatile(),
 })
 
 /** One `bad-request` failure in the Connection RPC result shape. */
@@ -169,9 +207,9 @@ function strField(payload: object | undefined, key: string): string | undefined 
 }
 
 /**
- * Mount the collector, its settings namespace, and the browser transport.
+ * Mount the collector, the configuration surface, and the browser transport.
  * @param ctx - host plugin context.
- * @param config - composed configuration (schema defaults, then user layer).
+ * @param config - the live configuration references the Loader keeps updated.
  */
 export function apply(ctx: Context, config: Config): void {
   // The credential seam is optional: a deployment without dsh-credentials
@@ -196,8 +234,8 @@ export function apply(ctx: Context, config: Config): void {
 
   // Sibling plugins publish their normalized quota on loopback routes of this
   // same server, whose port is only known once webServer has bound. The base
-  // URL is therefore re-resolved on every settings change rather than captured
-  // once at apply time.
+  // URL is therefore re-resolved on every read rather than captured once at
+  // apply time.
   const pluginBase = (): string => {
     const server = ctx.get('webServer')
     const port = server?.port
@@ -231,7 +269,7 @@ export function apply(ctx: Context, config: Config): void {
     },
   )
 
-  let intervalMs = config.refreshSeconds * 1000
+  let intervalMs = config.refreshSeconds.get() * 1000
   const collector = new QuotaCollector({
     context: providerContext,
     pluginBase: pluginBase(),
@@ -260,8 +298,16 @@ export function apply(ctx: Context, config: Config): void {
   // Antigravity backend services & route integration:
   const antigravity = setupAntigravity(ctx)
 
-  // WorkBuddy (CN) backend services & route integration:
-  setupWorkBuddy(ctx)
+  // WorkBuddy (CN) backend services & route integration. It reads its three
+  // fields through thunks into this plugin's live Config: the vendored runtime
+  // consults them from long-lived closures (a probe's consent check, a store's
+  // desktop path), so a snapshot taken at apply time would freeze the first
+  // value it ever saw.
+  const workbuddy = setupWorkBuddy(ctx, {
+    authFile: () => config.workbuddy.get().authFile,
+    authFileAI: () => config.workbuddy.get().authFileAI,
+    probeConsent: () => config.workbuddy.get().probeConsent === true,
+  })
 
   // Grok LLM adapter (when free) + live model catalog:
   setupGrok(ctx, grokService)
@@ -278,22 +324,48 @@ export function apply(ctx: Context, config: Config): void {
     new GrokAccountAdapter(grokService, async () => await collector.snapshot()),
   ])
 
-  const scope = ctx.settings.register(PROXY_MONITOR_NAMESPACE, Config, { applies: 'live' })
+  /**
+   * Apply the two pieces of live state a plain read cannot pick up on its own.
+   *
+   * Both are values *copied* out of the configuration at construction time: the
+   * collector's freshness window, and each WorkBuddy store's desktop-file path.
+   * The origin is re-resolved every time because the web server may bind after
+   * this plugin mounts. Everything else — the roster, the placement, the
+   * opacity — is read by the browser straight from the same form, so the Host
+   * has nothing to re-point for it.
+   */
+  const syncSettings = (): void => {
+    collector.setPluginBase(pluginBase())
+    const nextInterval = config.refreshSeconds.get() * 1000
+    if (nextInterval !== intervalMs) {
+      intervalMs = nextInterval
+      collector.setInterval(intervalMs)
+    }
+    workbuddy.repoint()
+  }
 
-  // Keep the live interval and base URL in step with the settings document, so
-  // a change in the UI takes effect without a reload.
-  ctx.effect(
-    () =>
-      scope.watch(next => {
-        collector.setPluginBase(pluginBase())
-        const nextInterval = next.refreshSeconds * 1000
-        if (nextInterval !== intervalMs) {
-          intervalMs = nextInterval
-          collector.setInterval(intervalMs)
-        }
-      }),
-    'dsh-proxy-monitor: settings watch',
-  )
+  // A settings write commits into the volatile references above and then emits
+  // this event on this plugin's own fiber; it is the only notification a
+  // volatile-only change produces (the plugin is not remounted).
+  ctx.effect(() => {
+    syncSettings()
+    return ctx.on('loader/volatile-update', () => {
+      syncSettings()
+    })
+  }, 'dsh-proxy-monitor: live settings')
+
+  /**
+   * This plugin ships its own settings page — the browser half registers two
+   * sections into `settings.section` — so the seam must not *also* generate a
+   * generic page for this entry. The policy is registered from an optional
+   * child because the business plugin neither needs nor requires the seam.
+   */
+  ctx.inject(['settings'], settingsCtx => {
+    settingsCtx.effect(
+      () => settingsCtx.settings.configure({ auto: false }, ctx.fiber),
+      'dsh-proxy-monitor: settings presentation',
+    )
+  })
 
   ctx.inject(['connection'], connectionCtx => {
     // The channel registration is scoped to the calling fiber by the service
@@ -363,7 +435,7 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.logger.info(
     'dsh-proxy-monitor: %s providers, refresh every %ss',
-    String(config.providers.length),
-    String(config.refreshSeconds),
+    String(config.providers.get().length),
+    String(config.refreshSeconds.get()),
   )
 }

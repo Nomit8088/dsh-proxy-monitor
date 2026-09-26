@@ -9,7 +9,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import {
   apply as applyWorkBuddy,
-  Config as WorkBuddyConfig,
   WORKBUDDY_PROVIDER,
   WorkBuddyCredentialStore,
   CN_VARIANT,
@@ -19,7 +18,32 @@ import { recordSetupOutcome, reasonText } from './diagnostics.js'
 import { wrapAdapterCatalog } from './llm-takeover.js'
 import { patchWorkBuddyEncryptedAuth } from './workbuddy/patch-encrypted-auth.js'
 
-export function setupWorkBuddy(ctx: Context) {
+/**
+ * The host's live WorkBuddy configuration.
+ *
+ * Thunks rather than values: the vendored runtime reads these fields from
+ * long-lived closures (a probe's consent check, a credential store's desktop
+ * path), and the Config references change in place when the settings page
+ * writes, so a snapshot taken here would freeze the first value ever seen.
+ */
+export interface WorkBuddyLiveOptions {
+  /** Explicit CN desktop auth-file path, or undefined for the app's own file. */
+  authFile(): string | undefined
+  /** Explicit international desktop auth-file path, or undefined. */
+  authFileAI(): string | undefined
+  /** Whether the user authorized reasoning-effort probes. */
+  probeConsent(): boolean
+}
+
+/** What the host half needs back from the vendored runtime. */
+export interface WorkBuddyRuntime {
+  /** Credential store the account face reads. */
+  store: WorkBuddyCredentialStore
+  /** Re-point every variant's credential store after a settings change. */
+  repoint(): void
+}
+
+export function setupWorkBuddy(ctx: Context, live: WorkBuddyLiveOptions): WorkBuddyRuntime {
   // WorkBuddy 5.6 encrypts desktop tokens; patch before apply() constructs stores.
   patchWorkBuddyEncryptedAuth()
 
@@ -33,9 +57,21 @@ export function setupWorkBuddy(ctx: Context) {
   // overlay can only wrap an adapter that already owns the route: wrapping
   // before this point logs "no adapter owns the route yet" and leaves the
   // picker reading the raw, unfiltered catalog.
+  let repoint: () => void = () => {}
   try {
-    const defaultConfig = WorkBuddyConfig({})
-    applyWorkBuddy(ctx as any, defaultConfig)
+    const runtimeConfig = {
+      get authFile() {
+        return live.authFile()
+      },
+      get authFileAI() {
+        return live.authFileAI()
+      },
+      get probeConsent() {
+        return live.probeConsent()
+      },
+    }
+    const started = applyWorkBuddy(ctx as any, runtimeConfig)
+    if (typeof started?.repoint === 'function') repoint = started.repoint
     recordSetupOutcome({ provider: WORKBUDDY_PROVIDER, phase: 'apply', ok: true })
   } catch (err) {
     recordSetupOutcome({ provider: WORKBUDDY_PROVIDER, phase: 'apply', ok: false, error: reasonText(err) })
@@ -79,5 +115,8 @@ export function setupWorkBuddy(ctx: Context) {
 
   return {
     store,
+    repoint: () => {
+      repoint()
+    },
   }
 }

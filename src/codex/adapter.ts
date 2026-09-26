@@ -21,7 +21,7 @@ import type { ResolvedPiAiProviderProfile } from "@deepseek-ai/dsh-llm-pi-ai";
 import type {
   AttachmentStore,
   ImageAttachmentRef,
-  ImageRequestPolicy,
+  ImageRequestTarget,
 } from "@deepseek-ai/dsh-attachment";
 import type { OpenAICodexCredentialStore } from "./store.js";
 import { OPENAI_CODEX_PROVIDER } from "./store.js";
@@ -281,27 +281,48 @@ export function openAICodexRequestImagePixelBudget(
   return dimensions.width * dimensions.height;
 }
 
+/**
+ * Tighten one request target until the resulting dimensions also satisfy
+ * Codex's longest-edge and rounded patch-grid limits.
+ *
+ * The 0.1.7 attachment seam hands a provider an explicit width/height/byte
+ * target — the pi-ai route derives it from that provider's pixel budget —
+ * instead of the area-only `maxPixels` policy the earlier seam took. The
+ * requested area is therefore recovered from the target box, run through the
+ * same budget search, and the accepted projection is expressed back as an
+ * explicit target. A target above the source keeps the source size, so this can
+ * only ever shrink.
+ *
+ * @param ref - source attachment the request is being encoded from.
+ * @param request - target the route asked for.
+ * @returns the target with dimensions a high-detail Codex prompt image fits.
+ */
+export function openAICodexImageTarget(
+  ref: ImageAttachmentRef,
+  request: ImageRequestTarget
+): ImageRequestTarget {
+  const requestedPixels = Math.min(
+    request.width * request.height,
+    ref.width * ref.height
+  );
+  const budget = openAICodexRequestImagePixelBudget(
+    ref.width,
+    ref.height,
+    requestedPixels
+  );
+  const dimensions = projectedImageDimensions(ref.width, ref.height, budget);
+  return { ...request, width: dimensions.width, height: dimensions.height };
+}
+
 function withOpenAICodexImagePolicy(store: AttachmentStore): AttachmentStore {
   return new Proxy(store, {
     get(target, property) {
       if (property === "readImageRequest") {
         return (
           ref: ImageAttachmentRef,
-          policy: ImageRequestPolicy,
+          request: ImageRequestTarget,
           signal?: AbortSignal
-        ) =>
-          target.readImageRequest(
-            ref,
-            {
-              ...policy,
-              maxPixels: openAICodexRequestImagePixelBudget(
-                ref.width,
-                ref.height,
-                policy.maxPixels
-              ),
-            },
-            signal
-          );
+        ) => target.readImageRequest(ref, openAICodexImageTarget(ref, request), signal);
       }
       const value = Reflect.get(target, property, target) as unknown;
       return typeof value === "function" ? value.bind(target) : value;
@@ -356,8 +377,12 @@ export function migrateLegacyOpenAICodexReplayState(value: unknown): unknown {
 function migrateReplayHistory(options: GenerateOptions): GenerateOptions {
   let changed = false;
   const messages = options.messages.map((message) => {
+    // The role discriminant is what narrows the union to an assistant message;
+    // only that variant carries `source.replayState` (and only a durable
+    // assistant message has a `source` at all — an identity-free request input
+    // does not).
     if (
-      message.source.kind !== "model" ||
+      message.role !== "assistant" ||
       message.source.replayState === undefined
     )
       return message;

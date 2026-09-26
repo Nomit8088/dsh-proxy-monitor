@@ -1,4 +1,4 @@
-﻿/** ChatGPT Codex image generation and reference-image editing. */
+/** ChatGPT Codex image generation and reference-image editing. */
 
 import { randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
@@ -12,6 +12,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, Message } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition, ToolExecution } from '@deepseek-ai/dsh-tools'
+import { openAICodexContextSource } from './context-source.js'
 import type { OpenAICodexCredentialStore } from './store.js'
 import { OPENAI_CODEX_PROVIDER } from './store.js'
 import { OPENAI_CODEX_BASE_URL } from './search.js'
@@ -225,10 +226,17 @@ function contentOf(value: ImagegenValue): ContentBlock[] {
   ]
 }
 
+/**
+ * Collect the image attachments a message list already carries.
+ *
+ * Tool results are first-class tool-role messages in this DSH generation, so
+ * their content is reached by the same walk as any other message; the earlier
+ * `tool-result` content block no longer exists and no longer needs descending
+ * into.
+ */
 function collectImageRefs(content: readonly ContentBlock[], output: ImageAttachmentRef[]): void {
   for (const block of content) {
     if (block.type === 'image') output.push(block.attachment)
-    else if (block.type === 'tool-result') collectImageRefs(block.content, output)
   }
 }
 
@@ -386,7 +394,7 @@ export function imagegenTool(
       if (exec.parent !== undefined) {
         exec.deferContext(createUserMessage({
           content: contentOf(value),
-          source: { kind: 'plugin', plugin: 'dsh-openai-codex' },
+          source: openAICodexContextSource(),
         }))
       }
       return value

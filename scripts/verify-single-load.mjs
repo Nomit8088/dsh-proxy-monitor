@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Startup duplicate-load verifier (regression guard for the
- * "settings namespace already registered" boot crash).
+ * duplicate-mount boot crash).
  *
  * Replays the profile composition the way `dsh web` does, WITHOUT booting a
  * server: profile `dsh.profile.bundles` -> each bundle's `dsh.bundle.patch` ->
@@ -10,9 +10,11 @@
  * a second time at runtime.
  *
  * Two independent paths load a plugin: the static bundle layer and the
- * injector's persisted registry. A package present on BOTH paths registers its
- * settings namespace twice, and dsh-settings throws on the second one, failing
- * the whole plugin tree. This script asserts the two paths stay disjoint.
+ * injector's persisted registry. A package present on BOTH paths mounts twice,
+ * and the second mount re-registers everything the plugin owns — LLM adapters,
+ * the Connection RPC channel, the configurable-provider directory — which those
+ * registries refuse, failing the whole plugin tree. This script asserts the two
+ * paths stay disjoint.
  *
  * Usage: node scripts/verify-single-load.mjs [--profile <name>] [--plugin <pkg>]
  */
@@ -156,7 +158,7 @@ if (staticRows.length > 1) {
 if (staticRows.length > 0 && injectedRows.length > 0) {
   problems.push(
     `${plugin} is loaded by BOTH paths: static bundles (${staticRows.length} row) AND the injector registry `
-    + `(${injectedRows.length} entry) — its settings namespace would be registered twice and dsh web would fail to start`,
+    + `(${injectedRows.length} entry) — it would mount twice and re-register its adapters and routes, and dsh web would fail to start`,
   )
 }
 if (staticRows.length === 0 && injectedRows.length === 0) {
@@ -178,7 +180,7 @@ console.log('')
 console.log('=== verdict ===')
 for (const n of notes) console.log(`note  : ${n}`)
 if (problems.length === 0) {
-  console.log(`PASS  : ${plugin} is loaded by exactly one path — no duplicate settings namespace registration`)
+  console.log(`PASS  : ${plugin} is loaded by exactly one path — no duplicate mount`)
   process.exit(0)
 }
 for (const p of problems) console.log(`FAIL  : ${p}`)

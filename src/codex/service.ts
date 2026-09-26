@@ -1,4 +1,4 @@
-﻿/** Shared host service consumed by optional OpenAI Codex front-door adapters. */
+/** Shared host service consumed by optional OpenAI Codex front-door adapters. */
 
 import type { AuthInteraction } from "@earendil-works/pi-ai";
 import type { Context } from "@deepseek-ai/cordis";
@@ -71,7 +71,14 @@ export class OpenAICodexService {
     });
   }
 
-  /** Attach the durable settings document when the active profile provides it. */
+  /**
+   * Adopt the durable preference document.
+   *
+   * The document is this provider's own file under the Harness home; the
+   * settings seam owns the provider's *configuration* (and no longer exposes
+   * per-plugin namespaces anyway), while these values are written by the
+   * provider's own routes.
+   */
   attachSettings(ctx: Context): void {
     this.policy.attach(ctx);
   }

@@ -9,8 +9,16 @@
  */
 /** Logical Connection RPC channel owned by this plugin's Host half. */
 export declare const PROXY_MONITOR_CHANNEL = "/proxy-monitor";
-/** Durable settings namespace registered by the Host and read by the browser. */
-export declare const PROXY_MONITOR_NAMESPACE = "dsh-proxy-monitor";
+/**
+ * Loader entry id of this plugin, and with it the identity of its settings.
+ *
+ * The settings seam addresses editable configuration by the id of the profile
+ * entry that owns it — one form per entry, projected from that entry's own
+ * `.volatile()` Config fields. Both halves therefore bind to this one string:
+ * the Host declares the schema, and the browser reads and writes the form of
+ * this entry.
+ */
+export declare const PROXY_MONITOR_ENTRY = "dsh-proxy-monitor";
 /**
  * Stable provider ids. `claude` has no local credential in this environment
  * and is therefore reported as an explicit "not configured" row rather than

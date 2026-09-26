@@ -102,7 +102,12 @@ const PACKAGES = [
   '@deepseek-ai/dsh-client-connection',
   '@deepseek-ai/dsh-client-ui-slots',
   '@deepseek-ai/dsh-client-ui-settings',
-  '@deepseek-ai/dsh-client-runtime',
+  // 0.1.7 surfaces: the browser store the Codex composer rows take their model
+  // directory from, the Loader's `loader/volatile-update` event this plugin
+  // listens to, and the settings client's path-op contract.
+  '@deepseek-ai/dsh-client-store',
+  '@deepseek-ai/cordis-plugin-loader',
+  '@deepseek-ai/dsh-api-remotes',
   // LLM / provider surface for the merged reverse-proxy adapters.
   '@deepseek-ai/dsh-llm',
   '@deepseek-ai/dsh-llm-pi-ai',

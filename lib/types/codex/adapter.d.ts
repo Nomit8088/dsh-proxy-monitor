@@ -1,7 +1,7 @@
 /** OpenAI Codex adapter assembled from public dsh-llm-pi-ai extension points. */
 import type { FetchFunction, Provider } from "@earendil-works/pi-ai";
 import { PiAiAdapter } from "@deepseek-ai/dsh-llm-pi-ai";
-import type { AttachmentStore } from "@deepseek-ai/dsh-attachment";
+import type { AttachmentStore, ImageAttachmentRef, ImageRequestTarget } from "@deepseek-ai/dsh-attachment";
 import type { OpenAICodexCredentialStore } from "./store.js";
 import type { ModelCatalogEntry, ResponseApiPreferences } from "./tool-policy.js";
 import type { FastModeRegistry } from "./fast-mode.js";
@@ -36,6 +36,23 @@ export declare const OPENAI_CODEX_PROMPT_IMAGE_INPUT_GUARD_BYTES: number;
  * also satisfy Codex's longest-edge and rounded patch-grid limits.
  */
 export declare function openAICodexRequestImagePixelBudget(width: number, height: number, maxPixels: number): number;
+/**
+ * Tighten one request target until the resulting dimensions also satisfy
+ * Codex's longest-edge and rounded patch-grid limits.
+ *
+ * The 0.1.7 attachment seam hands a provider an explicit width/height/byte
+ * target — the pi-ai route derives it from that provider's pixel budget —
+ * instead of the area-only `maxPixels` policy the earlier seam took. The
+ * requested area is therefore recovered from the target box, run through the
+ * same budget search, and the accepted projection is expressed back as an
+ * explicit target. A target above the source keeps the source size, so this can
+ * only ever shrink.
+ *
+ * @param ref - source attachment the request is being encoded from.
+ * @param request - target the route asked for.
+ * @returns the target with dimensions a high-detail Codex prompt image fits.
+ */
+export declare function openAICodexImageTarget(ref: ImageAttachmentRef, request: ImageRequestTarget): ImageRequestTarget;
 /** Lift the pre-rc.7 pi-ai replay shape into the current envelope on read. */
 export declare function migrateLegacyOpenAICodexReplayState(value: unknown): unknown;
 /**

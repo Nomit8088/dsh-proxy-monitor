@@ -56,18 +56,39 @@ export declare const DEFAULT_FAST_MODE_PREFERENCES: FastModePreferences;
 /** Live policy shared by the host tools, Codex adapter, and settings HTTP surface. */
 export declare class ImageToolPolicy {
     private current;
-    private scope;
+    /** Durable preference document, written by this provider's own routes. */
+    private readonly store;
+    /** Diagnostic sink; rebound by `attach`. */
+    private warn;
     private readonly imageWatchers;
     private readonly proxyWatchers;
     private catalogEntries;
     constructor(base?: Partial<OpenAICodexPreferences>, modelCatalog?: readonly ModelCatalogEntry[]);
-    /** Register durable live settings when the active profile supplies ctx.settings. */
+    /**
+     * Adopt the durable preference document.
+     *
+     * The stored document is the user layer alone; the schema resolves it over
+     * the defaults this instance was constructed with, catalog-derived enable and
+     * vision defaults included. The read is asynchronous, so a policy whose fiber
+     * unloads first must not adopt its result, and an unreadable document must
+     * leave the constructed defaults standing rather than failing the plugin.
+     */
     attach(ctx: Context): void;
+    /** Resolve one stored document over this instance's defaults. */
+    private resolve;
+    /**
+     * Merge one patch into the stored user layer and adopt the resolved result.
+     *
+     * `undefined` patch entries are dropped, matching the merge semantics the
+     * settings seam used: an absent key means "leave as is", never "erase".
+     * @param patch - partial preferences written by the browser or a route.
+     */
+    private persist;
     /** Return a detached settings projection for the browser. */
     snapshot(): ImageToolPreferences;
     /** Observe live changes that add or remove the scoped `read_image` enhancement. */
     watchImagePreferences(listener: () => void): () => void;
-    /** Persist a partial browser update through the settings service. */
+    /** Persist a partial browser update into the preference document. */
     update(patch: Partial<ImageToolPreferences>): Promise<ImageToolPreferences>;
     /** Return the current Codex-only Responses API experiments. */
     responseApiSnapshot(): ResponseApiPreferences;

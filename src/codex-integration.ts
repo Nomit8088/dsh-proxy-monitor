@@ -126,9 +126,11 @@ export function setupCodex(
     "dsh-proxy-monitor: codex proxy transport"
   );
 
-  ctx.inject(["settings"], (settingsCtx) => {
-    service.attachSettings(settingsCtx);
-  });
+  // The preference document is this provider's own file, so it is adopted
+  // unconditionally: an absent settings service no longer decides whether the
+  // Codex page can remember anything (it used to gate the namespace
+  // registration, and DSH 0.1.7 removed that seam entirely).
+  service.attachSettings(ctx);
 
   // Check if LLM service is available and if openai-codex route is already claimed
   ctx.inject(["llm"], (llmCtx) => {

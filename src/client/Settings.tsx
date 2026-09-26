@@ -5,10 +5,10 @@
  * not a General-page row: the plugin has enough options — provider roster,
  * placement, opacity, polling — that a single row would bury them.
  *
- * Writes go through the settings scope the Host registered, so the section
- * under `dsh-proxy-monitor:` in `settings.yaml` is the single source of truth
- * and the rail follows a change immediately (the Host watches the same
- * namespace and re-points the collector live).
+ * Writes go through the shared `configForms` entry form, so the values live in
+ * this plugin's entry config inside the profile patch — the one place the Host
+ * reads them from — and the rail follows a change immediately (the Host watches
+ * the same references and re-points the collector live).
  *
  * @module @dsh-external/dsh-proxy-monitor/client/Settings
  */

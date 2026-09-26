@@ -19,7 +19,7 @@ DeepSeek、Claude 只进额度采集，不进反代账户层——本插件不�
 | 平面 | 入口 | 允许接触 | 禁止 |
 | --- | --- | --- | --- |
 | Host | `src/index.ts` `apply` | 凭证、上游 HTTP、`ctx.llm`、webServer 路由、Connection RPC | 浏览器包、`window` |
-| Client | `src/client/index.tsx` | slots、settingsScope、Connection RPC、本插件 HTTP | 凭证、Node API、未注册的 `@deepseek-ai/*` require |
+| Client | `src/client/index.tsx` | slots、`configForms` 表单、Connection RPC、本插件 HTTP | 凭证、Node API、未注册的 `@deepseek-ai/*` require |
 
 浏览器半只收**无密钥的值**：账户身份、额度百分比、登录指引（URL / 设备码）。令牌出现在 client 是适配器的 bug。
 
@@ -44,11 +44,14 @@ Client 打包走 `tsdown` → `lib/client.js`。平台依赖必须写在 `packag
 
 ## 4. Host 装配顺序（`src/index.ts`）
 
-1. 注册 settings namespace `dsh-proxy-monitor`。
+1. 声明插件自己的 Config：可编辑字段一律 `.volatile()`（entry id `dsh-proxy-monitor`），设置页按 entry 读写它。
 2. 建 `QuotaCollector`（可对 Grok 等注入 `overrides`，走持锁的认证服务而不是第二套文件读取）。
 3. 建 `AccountRegistry`，挂四个 `AccountAdapter`。
 4. `setupCodex` / `setupAntigravity` / `setupWorkBuddy` / `setupGrok`：LLM 路由 + 目录 HTTP + 各家专属能力。
 5. Connection RPC：浏览器只经此通道拿额度快照与账户动作。
+
+Codex / WorkBuddy 的**偏好**不再进设置文档：它们的结构随活体模型目录变化（0.1.7 的 entry 表单只表达固定 schema），
+改为落在 `$DSH_HOME/storages/` 下的插件自有 JSON（`openai-codex-preferences.json`，与 `grok-model-settings.json` 同一套写法）。
 
 热重载时 leftover 独立包可能已经占了 LLM 路由。`registerAdapter` 会抛 `DUPLICATE_ADAPTER`。本插件用 `src/llm-takeover.ts`：
 

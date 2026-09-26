@@ -21,13 +21,17 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 
-// Type-only imports: declaration merging for ctx.slots / ctx.settingsScope /
-// ctx.connection, plus the slot contracts this plugin registers into.
-import type {} from '@deepseek-ai/dsh-client-runtime/client'
+// Type-only imports: declaration merging for `ctx.connection` and the settings
+// seam's `ctx.configForms`, plus the slot contracts this plugin registers into.
+// (The slots registry itself and its `ctx.slots` member are declared by the
+// renderer package, and this half reaches the registry through the narrow
+// hand-rolled context interface below. DSH 0.1.7 removed
+// `@deepseek-ai/dsh-client-runtime`, which used to hold both the browser context
+// alias and the settings scope.)
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-connection/client'
 
-import { PROXY_MONITOR_NAMESPACE, type QuotaSnapshot } from '../contract.js'
+import { PROXY_MONITOR_ENTRY, type QuotaSnapshot } from '../contract.js'
 import { createQuotaBroker, type QuotaBroker } from './api.js'
 import { AccountStore } from './accounts/store.js'
 import { SectionShell, type ProviderTab } from './accounts/SectionShell.js'
@@ -37,8 +41,14 @@ import type { AccountActions } from './accounts/AccountBlock.js'
 import { QuotaRail, type RailLayout } from './QuotaRail.js'
 import { ProxyMonitorSettings, type PluginSettings, type SettingsFace } from './Settings.js'
 
-/** Required browser services. */
-export const inject = ['slots', 'settingsScope', 'connection']
+/**
+ * Required browser services.
+ *
+ * `configForms` is the settings domain's client-side form service: the form for
+ * the `dsh-proxy-monitor` entry is what carries this plugin's options, so the
+ * rail and the settings section always read and write the same values.
+ */
+export const inject = ['slots', 'configForms', 'connection']
 
 /** The settings section's position in the Settings nav. */
 const SETTINGS_ORDER = 40
@@ -57,17 +67,17 @@ const FALLBACK_SETTINGS: PluginSettings = {
   yieldToTurnNav: true,
 }
 
-/** The slice of the settings service this plugin binds. */
-interface SettingsScopeLike<T> {
+/** The slice of the settings form service this plugin binds. */
+interface ConfigFormLike<T> {
   getSnapshot(): { value: T | undefined }
   subscribe(listener: () => void): () => void
-  set(field: string, value: unknown): Promise<void>
+  set(field: string, value: unknown): Promise<boolean>
 }
 
 /** The subset of the client context this plugin reads. */
 interface PluginContext {
-  settingsScope: {
-    bind<T>(spec: { namespace: string }): SettingsScopeLike<T>
+  configForms: {
+    get<T>(entryId: string): ConfigFormLike<T>
   }
   slots: {
     inject(key: string, callback: () => (() => void) | Iterable<() => void>): () => void
@@ -300,18 +310,21 @@ function ProxyAccountsSection({ accounts, broker }: {
 export function apply(ctx: Context): void {
   const context = ctx as unknown as PluginContext
   const broker = createQuotaBroker(context.connection.rpc)
-  const scope = context.settingsScope.bind<PluginSettings>({ namespace: PROXY_MONITOR_NAMESPACE })
+  // One form for the whole plugin, keyed by the Host entry id: the seam
+  // projects exactly that entry's volatile Config fields, so the settings
+  // section below writes the same object this half reads for the rail.
+  const form = context.configForms.get<PluginSettings>(PROXY_MONITOR_ENTRY)
   const store = new SettingsStore()
-  store.adopt(scope.getSnapshot().value)
+  store.adopt(form.getSnapshot().value)
 
   // Settings live in the Host document, so this half must follow writes made
   // anywhere — the settings page here, or another window.
   ctx.effect(() => {
     const sync = (): void => {
-      store.adopt(scope.getSnapshot().value)
+      store.adopt(form.getSnapshot().value)
     }
     sync()
-    return scope.subscribe(sync)
+    return form.subscribe(sync)
   }, 'dsh-proxy-monitor: settings subscription')
 
   // One surface owns the fetch; the other reads its result instead of opening a
@@ -356,7 +369,7 @@ export function apply(ctx: Context): void {
               broker,
               shared,
               write: (field, value) => {
-                void scope.set(field, value)
+                void form.set(field, value)
               },
             }),
           },

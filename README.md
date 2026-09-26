@@ -186,19 +186,27 @@ ui-sidebar-right 的面板是 `position:absolute` + `translateX` 滑入的，其
 - **提供商**：勾选要显示的提供商，箭头调整顺序；每行显示**实时状态**
   （"28.6% 已用" / "未配置：Claude Code is not signed in"）
 
-写入走宿主注册的 `dsh-proxy-monitor` 命名空间，落在 `~/.dsh/settings.yaml`：
+写入走**插件自己 entry 的配置**：DSH 0.1.7 起 `dsh-settings` 按 profile entry id 组织配置，
+把该 entry 的 Config 里标了 `.volatile()` 的字段投影成设置页表单，写回 profile patch，
+Loader 再把新值就地提交进同一批引用（`loader/volatile-update`），因此改设置不需要重启：
 
 ```yaml
-dsh-proxy-monitor:
-  anchor: right
-  restingOpacity: 82
-  providers:
-    - deepseek
-    - codex
-    - workbuddy
-    - antigravity
-    - grok
-  yieldToTurnNav: true
+# ~/.dsh/profiles/web/cordis.patch.yml（设置页写的就是这里）
+- id: dsh-proxy-monitor
+  config:
+    anchor: right
+    restingOpacity: 82
+    providers:
+      - deepseek
+      - codex
+      - workbuddy
+      - antigravity
+      - grok
+    yieldToTurnNav: true
+    # WorkBuddy 桌面端凭据路径与推理档位探测授权（同一 entry 内嵌）
+    workbuddy:
+      authFile: C:\Users\me\AppData\Roaming\WorkBuddy\auth.json
+      probeConsent: false
 ```
 
 ## 架构
@@ -209,7 +217,7 @@ dsh-proxy-monitor:
 ```
 Host 侧 (src/index.ts)                      Browser 侧 (src/client/)
 ┌──────────────────────────────┐            ┌───────────────────────────┐
-│ settings 命名空间             │            │ shell.overlay  ── QuotaRail│
+│ entry 配置（volatile Config） │            │ shell.overlay  ── QuotaRail│
 │   dsh-proxy-monitor (live)   │            │   · 圆环 + 详情卡          │
 │                              │            │   · frame.ts 读几何避让    │
 │ QuotaCollector               │            │                           │
@@ -241,7 +249,7 @@ src/
   geometry.ts              # 纯几何：面板宽度 → 侧栏偏移；轮次导航条的让位量（可真测）
   home.ts                  # DSH_HOME 解析
   collector.ts             # 并发采集 + 缓存 + 合流
-  index.ts                 # Host：settings 命名空间 + RPC 通道 + collector
+  index.ts                 # Host：entry 配置（volatile）+ RPC 通道 + collector
   providers/
     util.ts                # 有界 HTTP、形状探测、百分比/时间归一
     deepseek.ts codex.ts workbuddy.ts antigravity.ts grok.ts claude.ts

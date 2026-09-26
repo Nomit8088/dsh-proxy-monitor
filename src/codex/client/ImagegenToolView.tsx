@@ -1,4 +1,4 @@
-﻿/** Inline presentation for imagegen results in the conversation tool stream. */
+/** Inline presentation for imagegen results in the conversation tool stream. */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, MouseEvent } from 'react'
@@ -65,8 +65,16 @@ function resultParts(block: ToolCallViewProps['block']): {
   }
 }
 
+/**
+ * Raw argument JSON for the current stage.
+ *
+ * A settled result carries the call head it was backfilled from; a dispatched
+ * call carries its own `argsRaw`; a preparing call carries no arguments yet
+ * (the 0.1.7 stage split deliberately withholds them until dispatch).
+ */
 function argsRaw(block: ToolCallViewProps['block']): string {
-  return 'kind' in block ? block.call?.argsRaw ?? '{}' : block.argsRaw
+  if ('kind' in block) return block.call?.argsRaw ?? '{}'
+  return block.phase === 'start' ? block.argsRaw : '{}'
 }
 
 function prettyJson(raw: string): string {

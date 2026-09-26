@@ -1,7 +1,16 @@
 export declare const COMPATIBILITY_SCHEMA_VERSION: 1;
 export declare const SUPPORTED_NODE_RANGE = "^22.19.0 || >=24.0.0";
-export declare const SUPPORTED_DSH_PLUGIN_API_VERSION = "0.1.1-rc.2";
-export declare const SUPPORTED_PI_AI_VERSION = "0.84.4";
+/**
+ * Plugin-API generation this build is written against.
+ *
+ * Bumped with the 0.1.7 port: the settings seam that used to expose
+ * `register(ns, schema)` was replaced by entry-keyed Config forms, and the
+ * browser platform dropped `@deepseek-ai/dsh-client-runtime`. This constant is
+ * the one place the diagnostic compares against, so it must name the generation
+ * the code actually targets rather than a version range.
+ */
+export declare const SUPPORTED_DSH_PLUGIN_API_VERSION = "0.1.7-rc.2";
+export declare const SUPPORTED_PI_AI_VERSION = "0.85.1";
 export declare const PI_AI_PACKAGE = "@earendil-works/pi-ai";
 export declare const DSH_PLUGIN_API_PACKAGES: readonly ["@deepseek-ai/dsh-agent", "@deepseek-ai/dsh-atomic-write", "@deepseek-ai/dsh-attachment", "@deepseek-ai/dsh-home-paths", "@deepseek-ai/dsh-host-webserver", "@deepseek-ai/dsh-invariants", "@deepseek-ai/dsh-llm", "@deepseek-ai/dsh-llm-pi-ai", "@deepseek-ai/dsh-fs", "@deepseek-ai/dsh-session", "@deepseek-ai/dsh-settings", "@deepseek-ai/dsh-tools", "@deepseek-ai/dsh-web"];
 export declare const COMPATIBILITY_PACKAGES: readonly ["@deepseek-ai/dsh-llm", "@deepseek-ai/dsh-llm-pi-ai", "@earendil-works/pi-ai"];
@@ -44,12 +53,12 @@ export declare const COMPATIBILITY_CONTRACT: {
         readonly node: "^22.19.0 || >=24.0.0";
     };
     readonly dshPluginApi: {
-        readonly version: "0.1.1-rc.2";
+        readonly version: "0.1.7-rc.2";
         readonly packages: readonly ["@deepseek-ai/dsh-agent", "@deepseek-ai/dsh-atomic-write", "@deepseek-ai/dsh-attachment", "@deepseek-ai/dsh-home-paths", "@deepseek-ai/dsh-host-webserver", "@deepseek-ai/dsh-invariants", "@deepseek-ai/dsh-llm", "@deepseek-ai/dsh-llm-pi-ai", "@deepseek-ai/dsh-fs", "@deepseek-ai/dsh-session", "@deepseek-ai/dsh-settings", "@deepseek-ai/dsh-tools", "@deepseek-ai/dsh-web"];
     };
     readonly piAi: {
         readonly package: "@earendil-works/pi-ai";
-        readonly version: "0.84.4";
+        readonly version: "0.85.1";
     };
 };
 /** Evaluate a captured set of versions without touching the filesystem. */

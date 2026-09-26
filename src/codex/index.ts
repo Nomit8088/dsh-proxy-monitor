@@ -245,9 +245,9 @@ export function apply(ctx: Context, config: Config): void {
     },
     "dsh-openai-codex: proxy transport"
   );
-  ctx.inject(["settings"], (settingsCtx) => {
-    service.attachSettings(settingsCtx);
-  });
+  // Unconditional: the preference document is this provider's own file, not a
+  // settings namespace the active profile may or may not serve.
+  service.attachSettings(ctx);
   ctx.llm.registerAdapter(
     [OPENAI_CODEX_PROVIDER],
     createOpenAICodexAdapter(

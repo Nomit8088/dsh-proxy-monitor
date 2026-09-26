@@ -29,7 +29,14 @@ export declare class OpenAICodexService {
     readonly proxy: OpenAICodexProxyTransport;
     private readonly stopProxyWatch;
     constructor(options: OpenAICodexServiceOptions);
-    /** Attach the durable settings document when the active profile provides it. */
+    /**
+     * Adopt the durable preference document.
+     *
+     * The document is this provider's own file under the Harness home; the
+     * settings seam owns the provider's *configuration* (and no longer exposes
+     * per-plugin namespaces anyway), while these values are written by the
+     * provider's own routes.
+     */
     attachSettings(ctx: Context): void;
     /** Start the provider-native OAuth lifecycle. */
     login(interaction: AuthInteraction): Promise<void>;

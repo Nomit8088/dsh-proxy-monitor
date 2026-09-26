@@ -1,4 +1,4 @@
-﻿/** Optional HTTP(S) input for Harness's existing `read_image` tool. */
+/** Optional HTTP(S) input for Harness's existing `read_image` tool. */
 
 import type { Context } from '@deepseek-ai/cordis'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
@@ -10,6 +10,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-fs'
 import { assertImageCapable } from './image-capability.js'
+import { openAICodexContextSource } from './context-source.js'
 import type { ImageToolPolicy } from './tool-policy.js'
 import { fetchPublicHttpResource } from './public-http.js'
 import type { PublicHttpRuntime } from './public-http.js'
@@ -147,7 +148,7 @@ export function enhancedReadImageTool(
       if (exec.parent !== undefined) {
         exec.deferContext(createUserMessage({
           content: contentOf(value),
-          source: { kind: 'plugin', plugin: 'dsh-openai-codex' },
+          source: openAICodexContextSource(),
         }))
       }
       return value
@@ -216,10 +217,21 @@ export function installReadImageEnhancement(
   }
 
   // Reconcile through syncAll so the tools/change emitted by a scoped
-  // registration cannot re-enter before its installed record is committed.
-  ctx.on('agent/created', () => { syncAll() })
-  ctx.on('agent/disposed', ({ agent }) => { installed.delete(agent) })
-  ctx.on('tools/change', () => { syncAll(true) })
+  // registration cannot re-enter before its installed record is committed. The
+  // agent events' handler contract is `Promise<undefined> | undefined`, so each
+  // handler returns explicitly rather than falling through with `void`.
+  ctx.on('agent/created', () => {
+    syncAll()
+    return undefined
+  })
+  ctx.on('agent/disposed', ({ agent }) => {
+    installed.delete(agent)
+    return undefined
+  })
+  ctx.on('tools/change', () => {
+    syncAll(true)
+    return undefined
+  })
   const stopPolicy = policy.watchImagePreferences(() => { syncAll() })
   syncAll()
   ctx.effect(() => () => {

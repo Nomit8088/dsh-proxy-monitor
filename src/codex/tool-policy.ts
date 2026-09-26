@@ -1,10 +1,8 @@
 import type { Context } from "@deepseek-ai/cordis";
-import type {
-  SettingsNamespace,
-  SettingsScope,
-} from "@deepseek-ai/dsh-settings";
 import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 import z from "@deepseek-ai/schemastery";
+import { OpenAICodexPreferenceStore } from "./preferences-store.js";
+import type { OpenAICodexPreferenceDocument } from "./preferences-store.js";
 import {
   DEFAULT_PROXY_PREFERENCES,
   normalizeProxyUrl,
@@ -98,8 +96,15 @@ export const DEFAULT_FAST_MODE_PREFERENCES: FastModePreferences = {
   fastModeDefault: false,
 };
 
-const NAMESPACE = "openai-codex" as SettingsNamespace;
-
+/**
+ * Resolve a stored preference document over this instance's defaults.
+ *
+ * The schema still owns validation and the defaults — including the
+ * catalog-derived `models` / `imageModels` defaults — but nothing is registered
+ * with the settings seam any more: the values live in this provider's own
+ * document, and calling the schema fills every key that document omits, the way
+ * the removed namespace registration used to layer the composition entry.
+ */
 function preferenceSchema(
   defaultModels: readonly string[],
   defaultImageModels: readonly string[]
@@ -128,7 +133,10 @@ function preferenceSchema(
 /** Live policy shared by the host tools, Codex adapter, and settings HTTP surface. */
 export class ImageToolPolicy {
   private current: OpenAICodexPreferences;
-  private scope: SettingsScope<OpenAICodexPreferences> | undefined;
+  /** Durable preference document, written by this provider's own routes. */
+  private readonly store = new OpenAICodexPreferenceStore();
+  /** Diagnostic sink; rebound by `attach`. */
+  private warn: (message: string) => void = () => {};
   private readonly imageWatchers = new Set<() => void>();
   private readonly proxyWatchers = new Set<() => void>();
   private catalogEntries: ModelCatalogEntry[];
@@ -164,25 +172,64 @@ export class ImageToolPolicy {
     }
   }
 
-  /** Register durable live settings when the active profile supplies ctx.settings. */
+  /**
+   * Adopt the durable preference document.
+   *
+   * The stored document is the user layer alone; the schema resolves it over
+   * the defaults this instance was constructed with, catalog-derived enable and
+   * vision defaults included. The read is asynchronous, so a policy whose fiber
+   * unloads first must not adopt its result, and an unreadable document must
+   * leave the constructed defaults standing rather than failing the plugin.
+   */
   attach(ctx: Context): void {
-    const scope = ctx.settings.register(
-      NAMESPACE,
-      preferenceSchema(this.current.models, this.current.imageModels),
-      { base: this.current, applies: "live" }
-    );
-    this.scope = scope;
-    this.replace(scope.get());
-    const unwatch = scope.watch((next) => {
-      this.replace(next);
-    });
+    this.warn = (message) => {
+      ctx.logger.warn(message);
+    };
+    let detached = false;
     ctx.effect(
       () => () => {
-        unwatch();
-        if (this.scope === scope) this.scope = undefined;
+        detached = true;
       },
       "dsh-openai-codex: preferences"
     );
+    void this.store
+      .read()
+      .then((document) => {
+        if (detached) return;
+        this.replace(this.resolve(document));
+      })
+      .catch((error: unknown) => {
+        this.warn(
+          `OpenAI Codex preferences could not be read: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      });
+  }
+
+  /** Resolve one stored document over this instance's defaults. */
+  private resolve(
+    document: OpenAICodexPreferenceDocument
+  ): OpenAICodexPreferences {
+    return preferenceSchema(this.current.models, this.current.imageModels)(
+      document.values as unknown as OpenAICodexPreferences
+    );
+  }
+
+  /**
+   * Merge one patch into the stored user layer and adopt the resolved result.
+   *
+   * `undefined` patch entries are dropped, matching the merge semantics the
+   * settings seam used: an absent key means "leave as is", never "erase".
+   * @param patch - partial preferences written by the browser or a route.
+   */
+  private async persist(patch: Partial<OpenAICodexPreferences>): Promise<void> {
+    const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
+    const document = await this.store.modify((current) => ({
+      ...current.values,
+      ...Object.fromEntries(entries),
+    }));
+    this.replace(this.resolve(document));
   }
 
   /** Return a detached settings projection for the browser. */
@@ -201,14 +248,11 @@ export class ImageToolPolicy {
     };
   }
 
-  /** Persist a partial browser update through the settings service. */
+  /** Persist a partial browser update into the preference document. */
   async update(
     patch: Partial<ImageToolPreferences>
   ): Promise<ImageToolPreferences> {
-    if (this.scope === undefined)
-      throw new Error("OpenAI Codex settings service is unavailable");
-    await this.scope.update(patch);
-    this.replace(this.scope.get());
+    await this.persist(patch);
     return this.snapshot();
   }
 
@@ -224,15 +268,12 @@ export class ImageToolPolicy {
   async updateResponseApi(
     patch: Partial<ResponseApiPreferences>
   ): Promise<ResponseApiPreferences> {
-    if (this.scope === undefined)
-      throw new Error("OpenAI Codex settings service is unavailable");
-    await this.scope.update({
+    await this.persist({
       ...patch,
       ...(patch.useWebSocketContextReuse === undefined
         ? {}
         : { useStatefulResponses: false }),
     });
-    this.replace(this.scope.get());
     return this.responseApiSnapshot();
   }
 
@@ -248,10 +289,7 @@ export class ImageToolPolicy {
   async updateContextWindow(
     patch: Partial<ContextWindowPreferences>
   ): Promise<ContextWindowPreferences> {
-    if (this.scope === undefined)
-      throw new Error("OpenAI Codex settings service is unavailable");
-    await this.scope.update(patch);
-    this.replace(this.scope.get());
+    await this.persist(patch);
     return this.contextWindowSnapshot();
   }
 
@@ -266,10 +304,7 @@ export class ImageToolPolicy {
   async updateFastMode(
     patch: Partial<FastModePreferences>
   ): Promise<FastModePreferences> {
-    if (this.scope === undefined)
-      throw new Error("OpenAI Codex settings service is unavailable");
-    await this.scope.update(patch);
-    this.replace(this.scope.get());
+    await this.persist(patch);
     return this.fastModeSnapshot();
   }
 
@@ -293,14 +328,11 @@ export class ImageToolPolicy {
   async updateProxy(
     patch: Partial<ProxyPreferences>
   ): Promise<ProxyPreferences> {
-    if (this.scope === undefined)
-      throw new Error("OpenAI Codex settings service is unavailable");
     const normalized =
       patch.proxyUrl === undefined
         ? patch
         : { ...patch, proxyUrl: normalizeProxyUrl(patch.proxyUrl) };
-    await this.scope.update(normalized);
-    this.replace(this.scope.get());
+    await this.persist(normalized);
     return this.proxySnapshot();
   }
 
@@ -335,12 +367,19 @@ export class ImageToolPolicy {
       models: this.normalizeModels(enabled),
       imageModels: this.normalizeImageModels(image),
     }
-    if (this.scope !== undefined) {
-      void this.scope.update({
-        models: this.current.models,
-        imageModels: this.current.imageModels,
-      })
-    }
+    // Persist the narrowed selection without blocking the catalog swap: the
+    // live policy is already correct for this process, and a failed write must
+    // not take the model picker down with it.
+    void this.persist({
+      models: this.current.models,
+      imageModels: this.current.imageModels,
+    }).catch((error: unknown) => {
+      this.warn(
+        `OpenAI Codex catalog preferences could not be saved: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    });
     return this.modelCatalogSnapshot()
   }
 
@@ -360,15 +399,10 @@ export class ImageToolPolicy {
         ? {}
         : { imageModels: this.normalizeImageModels(patch.imageModels) }),
     };
-    if (this.scope === undefined) {
-      this.replace(next);
-      return this.modelCatalogSnapshot();
-    }
-    await this.scope.update({
+    await this.persist({
       ...(patch.models === undefined ? {} : { models: next.models }),
       ...(patch.imageModels === undefined ? {} : { imageModels: next.imageModels }),
     });
-    this.replace(this.scope.get());
     return this.modelCatalogSnapshot();
   }
 
