@@ -152,9 +152,11 @@ DSH 的 `projectImagesForTextModel` 在「定义了 `inputModalities` 且不含 
 
 ## 5. 活体失败时的降级
 
-- **已登录但上游失败**：保留上次 catalog，设置页报 error，不要用过期硬编码表覆盖用户勾选。
-- **未登录**：可以展示静态模板（Codex gpt-6 补丁、Grok pi-ai 基表），但刷新按钮仍应存在；登录后再 refresh 才是真目录。
-- **禁止**把「我们猜的常用模型」写进 `listModels` 冒充活体。Antigravity 已经踩过：硬编码族在账号没有时仍出现。
+- **已登录但上游失败**：保留上次成功的 catalog 与用户勾选，设置页明确报活体刷新错误，并注明当前列表可能过期；不得把它误称为本次账号的活体模型。
+- **没有上次成功目录 / 上游返回空目录**：Antigravity 选择器返回空列表，不能把静态 `MODELS` 模板（含 3.7 Flash）冒充当前账号已获准使用的模型。
+- **未登录**：Codex / Grok 可以展示它们的静态模板，但刷新按钮仍应存在；登录后再 refresh 才是真目录。
+- **禁止**把「我们猜的常用模型」写进 `listModels` 冒充活体，也不能凭名称猜测 Gemini 3.8 Flash 的 runtime id：只有 Google 当前账号的 available-models payload 真返回，才显示并允许勾选。
+- **额度与目录是两个接口**：额度分桶可读、模型目录 403 时额度仍要正常展示，目录保留旧缓存并报错；额度自身 403 时原样显示账号验证/权限失败，不能用第二次无项目/旧 token 请求覆盖首个错误。`Verify your account to continue` 是 Google 的账号门禁，不是「额度已耗尽」，插件不能替账号完成验证。
 
 Codex 活体需要 OAuth access + `accountId`。没签过到 `/codex/models` 的会话，历史上从未 live-fetch 过——5.3 出现在选择器里只是因为 pi-ai 静态 JSON。新模型（如 gpt-6-luna / gpt-6-sol）必须进静态补丁 **或** 活体 payload，只改设置页无效。
 

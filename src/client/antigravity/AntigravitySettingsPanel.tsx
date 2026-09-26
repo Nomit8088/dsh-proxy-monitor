@@ -28,6 +28,13 @@ class CatalogRequestError extends Error {
   }
 }
 
+/** Explain Google's account gate without suggesting a different model id can bypass it. */
+function refreshReason(message: string): string {
+  return /verify your account to continue/i.test(message)
+    ? `Google 要求此账号先完成验证；OAuth 登录成功只证明有凭据，不代表已获 Cloud Code Assist 额度/模型权限。请按 Google 的提示验证账号后再刷新。${message}`
+    : message
+}
+
 async function jsonRequest<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const response = await fetch(path, {
     method,
@@ -56,21 +63,30 @@ export function AntigravitySettingsPanel(): ReactNode {
   const load = useCallback(async (refreshLive: boolean) => {
     setBusy(true)
     setError(undefined)
+    let refreshFailure: string | undefined
     try {
       if (refreshLive) {
         try {
-          const quota = await jsonRequest<{ models?: ModelCatalog }>(QUOTA_PATH, 'POST')
+          const quota = await jsonRequest<{ models?: ModelCatalog; catalogError?: string }>(QUOTA_PATH, 'POST')
           if (quota.models !== undefined) {
             setCatalog(quota.models)
+            if (quota.catalogError) {
+              setError(`额度已读取，但活体模型目录刷新失败（仅显示上次保存的列表，如有）：${refreshReason(quota.catalogError)}`)
+            }
             return
           }
-        } catch {
-          // Unsigned-in or upstream failure: fall through to the saved catalog.
+          refreshFailure = '额度接口没有返回模型目录'
+        } catch (caught) {
+          refreshFailure = caught instanceof Error ? caught.message : String(caught)
         }
       }
       setCatalog(await jsonRequest<ModelCatalog>(MODELS_PATH))
+      if (refreshFailure) {
+        setError(`活体刷新失败，显示上次保存的目录；不能据此认定模型仍可用：${refreshReason(refreshFailure)}`)
+      }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      const savedError = caught instanceof Error ? caught.message : String(caught)
+      setError(refreshFailure ? `活体刷新失败：${refreshReason(refreshFailure)}；读取本地目录也失败：${savedError}` : savedError)
     } finally {
       setBusy(false)
     }

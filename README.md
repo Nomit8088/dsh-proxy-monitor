@@ -16,10 +16,10 @@
 dsh plugin --profile web add github:Nomit8088/dsh-proxy-monitor
 
 # 钉版本
-dsh plugin --profile web add github:Nomit8088/dsh-proxy-monitor#v0.2.2
+dsh plugin --profile web add github:Nomit8088/dsh-proxy-monitor#v0.2.3
 
 # Release 预打包 tgz（等价，不碰 git）
-dsh plugin --profile web add https://github.com/Nomit8088/dsh-proxy-monitor/releases/download/v0.2.2/dsh-external-dsh-proxy-monitor-0.2.2.tgz
+dsh plugin --profile web add https://github.com/Nomit8088/dsh-proxy-monitor/releases/download/v0.2.3/dsh-external-dsh-proxy-monitor-0.2.3.tgz
 
 # 本地目录 link（开发调试）
 dsh plugin --profile web add link:D:\dev\toolPrograms\dsh-plugin\dsh-proxy-monitor

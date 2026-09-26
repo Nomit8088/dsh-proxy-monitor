@@ -1,6 +1,6 @@
 {
   "name": "@dsh-external/dsh-proxy-monitor",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "订阅反代 + 额度监控：把 Codex / Antigravity / WorkBuddy / Grok 的订阅账号接入 DSH（LLM 路由 + 生图 + 活体模型目录 + 专属设置），并在侧栏用圆环展示各 provider 的额度消耗",
   "type": "module",
   "main": "./lib/index.js",
@@ -65,7 +65,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:client": "tsdown",
-    "test": "node scripts/test-frame.mjs && node scripts/test-transition.mjs && node scripts/test-accounts.mjs && node scripts/test-grok-account.mjs && node scripts/test-codex-account.mjs && node scripts/test-antigravity-account.mjs && node scripts/test-antigravity-models.mjs && node scripts/test-catalog-preferences.mjs && node scripts/test-workbuddy-encrypted-auth.mjs && node scripts/test-workbuddy-catalog.mjs",
+    "test": "node scripts/test-frame.mjs && node scripts/test-transition.mjs && node scripts/test-accounts.mjs && node scripts/test-grok-account.mjs && node scripts/test-codex-account.mjs && node scripts/test-antigravity-account.mjs && node scripts/test-antigravity-models.mjs && node scripts/test-antigravity-quota.mjs && node scripts/test-catalog-preferences.mjs && node scripts/test-workbuddy-encrypted-auth.mjs && node scripts/test-workbuddy-catalog.mjs",
     "probe": "node scripts/probe.mjs",
     "inspect:css": "node scripts/inspect-css.mjs",
     "preview:shape": "node scripts/preview-shape.mjs",

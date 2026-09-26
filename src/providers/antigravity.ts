@@ -17,6 +17,7 @@ import type { ProviderQuota, QuotaWindow, WindowKind } from '../contract.js'
 import {
   clampPercent,
   fetchJson,
+  PROVIDER_TIMEOUT_MS,
   isRecord,
   num,
   reasonOf,
@@ -170,12 +171,27 @@ function windowsFromUpstream(body: Record<string, unknown>): QuotaWindow[] {
 export async function readAntigravity(ctx: ProviderContext, pluginBase: string): Promise<ProviderQuota> {
   const base = { id: 'antigravity' as const, name: 'Antigravity', fetchedAt: Date.now() }
   try {
-    // Preferred: the sibling plugin's normalized route.
+    // Prefer the sibling runtime: it refreshes OAuth, probes both endpoints and
+    // knows which project this account uses. Its upstream 403/500 is authoritative
+    // and must not trigger a *second*, production-only call with a stale raw
+    // access token that replaces the useful provider reason with `HTTP 403`.
+    // Only an absent route (404) or missing local server may use the fallback.
+    let routeMissing = false
     try {
-      const payload = await fetchJson(`${pluginBase}${PLUGIN_QUOTA_PATH}`, {
+      const response = await fetch(`${pluginBase}${PLUGIN_QUOTA_PATH}`, {
         method: 'GET',
         headers: { accept: 'application/json' },
+        signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
       })
+      if (response.status === 404) {
+        routeMissing = true
+        throw new Error('quota route is not mounted')
+      }
+      const payload: unknown = await response.json().catch(() => undefined)
+      if (!response.ok) {
+        const details = isRecord(payload) ? str(payload, 'error') : undefined
+        throw new Error(`Antigravity quota route HTTP ${String(response.status)}${details ? `: ${reasonOf(details)}` : ''}`)
+      }
       if (!isRecord(payload) || payload['ok'] !== true || !isRecord(payload['value'])) {
         throw new Error('plugin route answered an unexpected payload')
       }
@@ -191,10 +207,11 @@ export async function readAntigravity(ctx: ProviderContext, pluginBase: string):
         windows,
       }
     } catch (routeError) {
+      if (!routeMissing && !(routeError instanceof TypeError)) throw routeError
       ctx.warn('antigravity', `plugin route unavailable (${reasonOf(routeError)}); calling upstream directly`)
     }
 
-    // Fallback: direct upstream call using the shared credential.
+    // Fallback only for a genuinely absent local route.
     const windows = windowsFromUpstream(await readUpstream(ctx.home))
     if (windows.length === 0) throw new Error('upstream reported no quota buckets')
     return {
