@@ -38,9 +38,13 @@ const PROJECT_CACHE_TTL_MS = 30 * 60 * 1000;
 const MODEL_CACHE_TTL_MS = 30 * 60 * 1000;
 const OAUTH_CALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
 
-const DEFAULT_ENDPOINT = "https://daily-cloudcode-pa.sandbox.googleapis.com";
+// The installed Antigravity language server is configured for the daily
+// production host. Quota/model discovery must not omit it when the sandbox and
+// older cloudcode host reject the same account.
+const DEFAULT_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
 const ENDPOINT_FALLBACKS = [
   DEFAULT_ENDPOINT,
+  "https://daily-cloudcode-pa.sandbox.googleapis.com",
   "https://cloudcode-pa.googleapis.com",
 ];
 
@@ -909,6 +913,7 @@ async function postJson(path, token, body) {
         method: "POST",
         headers: jsonHeaders(token),
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
       });
       setLastEndpoint(endpoint);
       setLastStatus(response.status);
@@ -977,24 +982,25 @@ async function fetchMergedAvailableModels(token, projectId) {
       failures.push(`${new URL(result.endpoint).host}: ${result.status ? `HTTP ${result.status}` : "transport failure"}${result.error ? ` (${result.error})` : ""}`);
       continue;
     }
-    setLastEndpoint(result.endpoint);
-    setLastStatus(result.status);
-    lastEndpoint = result.endpoint;
-    lastStatus = result.status;
+    if (!lastEndpoint) {
+      setLastEndpoint(result.endpoint);
+      setLastStatus(result.status);
+      lastEndpoint = result.endpoint;
+      lastStatus = result.status;
+    }
     if (isRecord(result.data) && isRecord(result.data.models)) {
       for (const [id, model] of Object.entries(result.data.models)) {
         if (!mergedModels[id]) {
           mergedModels[id] = model;
-        } else {
-          const prevFraction = mergedModels[id]?.quotaInfo?.remainingFraction;
-          const newFraction = model?.quotaInfo?.remainingFraction;
-          if (typeof newFraction === "number" && (prevFraction === undefined || newFraction < prevFraction)) {
-            mergedModels[id] = model;
-          }
+        } else if (mergedModels[id]?.quotaInfo?.remainingFraction === undefined
+          && typeof model?.quotaInfo?.remainingFraction === "number") {
+          // Supplement an absent quota, but never let a lower-priority host
+          // overwrite a fraction actually returned by the official daily host.
+          mergedModels[id] = model;
         }
       }
     }
-    if (isRecord(result.data) && typeof result.data.defaultAgentModelId === "string") {
+    if (!defaultAgentModelId && isRecord(result.data) && typeof result.data.defaultAgentModelId === "string") {
       defaultAgentModelId = result.data.defaultAgentModelId;
     }
   }
@@ -1038,23 +1044,16 @@ async function fetchMergedQuotaSummary(token) {
   const results = await Promise.all(
     candidates.map((endpoint) => fetchQuotaSummaryFromEndpoint(endpoint, token)),
   );
-  let best = undefined;
-  for (const result of results) {
-    if (!result || !isRecord(result.data)) continue;
-    if (!best) {
-      best = result;
-      continue;
-    }
-    const hasActiveConsumption = (Array.isArray(result.data.groups) ? result.data.groups : []).some((g) =>
-      (Array.isArray(g?.buckets) ? g.buckets : []).some(
-        (b) => typeof b?.remainingFraction === "number" && b.remainingFraction < 1,
+  // Respect endpoint priority: the installed official client uses daily
+  // production. A sandbox response must not replace its real quota just
+  // because the sandbox happens to report a lower remaining fraction.
+  const best = results.find((result) =>
+    isRecord(result?.data) && Array.isArray(result.data.groups) && result.data.groups.some((group) =>
+      Array.isArray(group?.buckets) && group.buckets.some((bucket) =>
+        typeof bucket?.remainingFraction === "number",
       ),
-    );
-    if (hasActiveConsumption) {
-      best = result;
-      break;
-    }
-  }
+    ),
+  ) || results.find((result) => isRecord(result?.data) && Array.isArray(result.data.groups));
   if (!best) {
     const failures = results.map((result) =>
       `${new URL(result.endpoint).host}: ${result.status ? `HTTP ${result.status}` : "transport failure"}${result.error ? ` (${result.error})` : ""}`,
@@ -1427,7 +1426,7 @@ function parseTier(value) {
 
 export async function fetchAccountQuota(store = new FileCredentialStore(), modelSettings) {
   const { token, projectId: credentialProjectId } = await ensureApiKey(store);
-  const [assistResult, summary] = await Promise.all([
+  const [assistResult, summaryResult] = await Promise.all([
     postJson("/v1internal:loadCodeAssist", token, {
       metadata: {
         ideType: "ANTIGRAVITY",
@@ -1435,7 +1434,10 @@ export async function fetchAccountQuota(store = new FileCredentialStore(), model
         pluginType: "GEMINI",
       },
     }).catch(() => null),
-    fetchMergedQuotaSummary(token),
+    fetchMergedQuotaSummary(token).then(
+      (value) => ({ value }),
+      (error) => ({ error: safeError(error) }),
+    ),
   ]);
 
   const discoveredProject = assistResult ? extractProjectId(assistResult.data) : undefined;
@@ -1445,10 +1447,10 @@ export async function fetchAccountQuota(store = new FileCredentialStore(), model
   });
   setLastProjectId(projectId);
 
-  // Quota and model discovery are separate capabilities. A signed-in account
-  // may be allowed to read its quota while its project-scoped model directory
-  // is denied (403), or vice versa; the latter must not erase a valid quota
-  // reading or overwrite the last known catalog with a fabricated empty one.
+  // Summary (shared 5h/weekly buckets) and available models (per-model quota)
+  // are independent upstream calls. The latter can report real remaining
+  // fractions even if the optional grouped summary is denied. Neither may
+  // fabricate the other's data or replace a saved catalog on failure.
   let available;
   let catalogError;
   try {
@@ -1457,7 +1459,12 @@ export async function fetchAccountQuota(store = new FileCredentialStore(), model
     catalogError = safeError(error);
     setLastError(catalogError);
   }
-  const { groups, description } = parseQuotaSummary(summary.data);
+  const summary = summaryResult.value;
+  const quotaError = summaryResult.error;
+  if (!summary && !available) {
+    throw new Error(`${quotaError || "Antigravity quota summary unavailable"}; ${catalogError || "Antigravity model discovery unavailable"}`.slice(0, 760));
+  }
+  const { groups, description } = summary ? parseQuotaSummary(summary.data) : { groups: [], description: undefined };
   const { models, defaultAgentModelId } = available ? parseModels(available.data) : { models: [], defaultAgentModelId: undefined };
   const catalogModels = available ? parseCatalogModels(available.data) : [];
   const assistData = isRecord(assistResult?.data) ? assistResult.data : {};
@@ -1471,7 +1478,7 @@ export async function fetchAccountQuota(store = new FileCredentialStore(), model
 
   cachedQuota = {
     projectId,
-    endpoint: summary.endpoint,
+    endpoint: summary?.endpoint || available?.endpoint,
     productTier,
     paidTier,
     planLabel,
@@ -1480,6 +1487,7 @@ export async function fetchAccountQuota(store = new FileCredentialStore(), model
     models,
     catalogModels,
     defaultAgentModelId,
+    ...(quotaError ? { quotaError } : {}),
     ...(catalogError ? { catalogError } : {}),
     fetchedAt: Date.now(),
   };
@@ -3213,6 +3221,7 @@ function registerWebApi(ctx, store, modelSettings) {
                     projectId: quota.projectId,
                     planLabel: quota.planLabel,
                     fetchedAt: quota.fetchedAt,
+                    ...(quota.quotaError ? { quotaError: quota.quotaError } : {}),
                     ...(quota.catalogError ? { catalogError: quota.catalogError } : {}),
                     ...quotaCardRows(quota),
                     models: modelOptionsPayload(await modelSettings.read(), quota),

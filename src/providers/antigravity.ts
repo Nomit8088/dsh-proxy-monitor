@@ -83,6 +83,28 @@ function windowsFromPlugin(payload: Record<string, unknown>): QuotaWindow[] {
   return windows
 }
 
+/** Only use real per-model remaining fractions when grouped quota was denied. */
+function windowsFromModels(payload: Record<string, unknown>): QuotaWindow[] {
+  const rows = Array.isArray(payload['modelRows']) ? payload['modelRows'] : []
+  const windows: QuotaWindow[] = []
+  for (const row of rows) {
+    if (!isRecord(row)) continue
+    const id = str(row, 'id')
+    const remaining = num(row, 'remainingFraction')
+    if (id === undefined || remaining === undefined) continue
+    windows.push(windowOf(
+      { id: `model:${id}`, label: str(row, 'label') ?? id, kind: 'other' },
+      {
+        usedPercent: usedFromRemaining(clampPercent(remaining * 100)),
+        resetAt: toIso(row['resetTime']),
+        detail: '模型接口返回的剩余额度；分组的 5 小时/每周额度未读取',
+      },
+    ))
+    if (windows.length >= 24) break
+  }
+  return windows
+}
+
 /**
  * Pick the headline window: the weekly bucket is the binding allowance, so it
  * leads; otherwise the first reported window does.
@@ -196,8 +218,9 @@ export async function readAntigravity(ctx: ProviderContext, pluginBase: string):
         throw new Error('plugin route answered an unexpected payload')
       }
       const value = payload['value']
-      const windows = windowsFromPlugin(value)
-      if (windows.length === 0) throw new Error('plugin route reported no quota buckets')
+      const grouped = windowsFromPlugin(value)
+      const windows = grouped.length > 0 ? grouped : windowsFromModels(value)
+      if (windows.length === 0) throw new Error(str(value, 'quotaError') ?? 'plugin route reported no quota data')
       return {
         ...base,
         status: 'ok',

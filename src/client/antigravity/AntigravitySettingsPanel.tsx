@@ -28,10 +28,10 @@ class CatalogRequestError extends Error {
   }
 }
 
-/** Explain Google's account gate without suggesting a different model id can bypass it. */
+/** A request-level Google verification error does not prove the official IDE is unusable. */
 function refreshReason(message: string): string {
   return /verify your account to continue/i.test(message)
-    ? `Google 要求此账号先完成验证；OAuth 登录成功只证明有凭据，不代表已获 Cloud Code Assist 额度/模型权限。请按 Google 的提示验证账号后再刷新。${message}`
+    ? `Google 拒绝了插件本次请求并返回验证提示；若官方 Antigravity 仍可读取额度，不能据此断定账号整体未验证。请检查请求端点与该插件的 OAuth 授权。${message}`
     : message
 }
 
@@ -67,11 +67,13 @@ export function AntigravitySettingsPanel(): ReactNode {
     try {
       if (refreshLive) {
         try {
-          const quota = await jsonRequest<{ models?: ModelCatalog; catalogError?: string }>(QUOTA_PATH, 'POST')
+          const quota = await jsonRequest<{ models?: ModelCatalog; catalogError?: string; quotaError?: string }>(QUOTA_PATH, 'POST')
           if (quota.models !== undefined) {
             setCatalog(quota.models)
             if (quota.catalogError) {
-              setError(`额度已读取，但活体模型目录刷新失败（仅显示上次保存的列表，如有）：${refreshReason(quota.catalogError)}`)
+              setError(`活体模型目录刷新失败（仅显示上次保存的列表，如有）：${refreshReason(quota.catalogError)}`)
+            } else if (quota.quotaError) {
+              setError(`模型目录已刷新，但 5 小时/每周分组额度读取失败；如有模型剩余额度，仅来自模型接口：${refreshReason(quota.quotaError)}`)
             }
             return
           }
