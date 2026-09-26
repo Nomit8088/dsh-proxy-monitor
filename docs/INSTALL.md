@@ -16,7 +16,7 @@
 | 方式 | 命令要点 | 适用场景 |
 | --- | --- | --- |
 | **A. `dsh plugin` + GitHub 源** | `dsh plugin --profile web add github:Nomit8088/dsh-proxy-monitor` | 推荐：一条命令，跟随 main |
-| **B. `dsh plugin` + Release tgz** | `... add https://github.com/Nomit8088/dsh-proxy-monitor/releases/download/v0.2.1/dsh-external-dsh-proxy-monitor-0.2.1.tgz` | 固定产物、git 网络不稳、内网分发 |
+| **B. `dsh plugin` + Release tgz** | `... add https://github.com/Nomit8088/dsh-proxy-monitor/releases/download/v0.2.2/dsh-external-dsh-proxy-monitor-0.2.2.tgz` | 固定产物、git 网络不稳、内网分发 |
 | **C. 本地目录 link** | `... add link:D:\dev\toolPrograms\dsh-plugin\dsh-proxy-monitor` | 开发调试 |
 | **D. 手写 profile 清单** | 直接编辑 `~/.dsh/profiles/web/package.json` | 声明式管理 / CLI 不可用 |
 
@@ -33,7 +33,7 @@
 dsh plugin --profile web add github:Nomit8088/dsh-proxy-monitor
 
 # 钉具体版本（tag / commit 都行）
-dsh plugin --profile web add github:Nomit8088/dsh-proxy-monitor#v0.2.1
+dsh plugin --profile web add github:Nomit8088/dsh-proxy-monitor#v0.2.2
 dsh plugin --profile web add github:Nomit8088/dsh-proxy-monitor#<commit-sha>
 
 # 换个 profile
@@ -57,7 +57,7 @@ dsh plugin --profile web add git+https://gh-proxy.com/https://github.com/Nomit80
 直接装附件：
 
 ```sh
-dsh plugin --profile web add https://github.com/Nomit8088/dsh-proxy-monitor/releases/download/v0.2.1/dsh-external-dsh-proxy-monitor-0.2.1.tgz
+dsh plugin --profile web add https://github.com/Nomit8088/dsh-proxy-monitor/releases/download/v0.2.2/dsh-external-dsh-proxy-monitor-0.2.2.tgz
 ```
 
 这是最"钝"的一种：不碰 git、不需要 registry、产物可校验（Release 页有 shasum）。
@@ -66,7 +66,7 @@ dsh plugin --profile web add https://github.com/Nomit8088/dsh-proxy-monitor/rele
 
 ```sh
 npm pack
-gh release create v0.2.1 ./dsh-external-dsh-proxy-monitor-0.2.1.tgz --title v0.2.1 --generate-notes
+gh release create v0.2.2 ./dsh-external-dsh-proxy-monitor-0.2.2.tgz --title v0.2.2 --generate-notes
 ```
 
 > tgz 文件名由 npm 生成：`@scope/name` → `scope-name-<version>.tgz`（去掉 `@`、`/` 换成 `-`）。
@@ -75,7 +75,7 @@ gh release create v0.2.1 ./dsh-external-dsh-proxy-monitor-0.2.1.tgz --title v0.2
 也可以把 tgz 下载到本地再装：
 
 ```sh
-dsh plugin --profile web add ./dsh-external-dsh-proxy-monitor-0.2.1.tgz
+dsh plugin --profile web add ./dsh-external-dsh-proxy-monitor-0.2.2.tgz
 ```
 
 ## 4. 方式 C：本地目录 link（开发）
@@ -140,7 +140,7 @@ dsh --profile web --dump-config | grep -i proxy-monitor
 dsh plugin --profile web add github:Nomit8088/dsh-proxy-monitor
 
 # 钉住某个版本 / 提交
-dsh plugin --profile web add github:Nomit8088/dsh-proxy-monitor#v0.2.1
+dsh plugin --profile web add github:Nomit8088/dsh-proxy-monitor#v0.2.2
 
 # 卸载（reconcile 会同时把它从 dsh.profile.bundles 摘掉）
 dsh plugin --profile web remove @dsh-external/dsh-proxy-monitor

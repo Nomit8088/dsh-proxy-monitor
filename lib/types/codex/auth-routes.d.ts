@@ -91,6 +91,16 @@ export declare class OpenAICodexWebAuth {
     private onEvent;
     private readStoredStatus;
     private rejectChallenge;
+    /**
+     * Forget the in-flight operation so a later attempt starts a fresh flow.
+     *
+     * Cancellation only reaches the provider when it is already waiting on our
+     * signal; a flow parked on a prompt of its own would keep the operation set
+     * forever, and every later `signIn()` would then join a conversation that is
+     * over — presenting as an endless "waiting for the authorization page" with no
+     * error at all. The abandoned promise is left to settle on its own.
+     */
+    private detachOperation;
     private clearChallengeTimer;
     private cancelSignIn;
 }

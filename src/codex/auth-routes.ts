@@ -29,8 +29,13 @@ import {
 } from "./trusted-origins.js";
 import { FastModeRegistry, isFastModeSessionId } from "./fast-mode.js";
 import { OPENAI_CODEX_FAST_MODE_PATH } from "./fast-mode-paths.js";
-import { startCodexCallbackBridge } from "./loopback-bridge.js";
+import {
+  OPENAI_CODEX_CALLBACK_PORT,
+  codexCallbackHost,
+  startCodexCallbackBridge,
+} from "./loopback-bridge.js";
 import type { LoopbackBridge } from "./loopback-bridge.js";
+import { createServer } from "node:net";
 import type {
   ContextWindowPreferences,
   FastModePreferences,
@@ -119,19 +124,55 @@ function safeMessage(error: unknown): string {
     .slice(0, 1000);
 }
 
-/** Reject with the prompt's abort reason while browser callback owns completion. */
-function waitForPromptAbort(prompt: AuthPrompt): Promise<string> {
+/**
+ * Reject with the prompt's abort reason while browser callback owns completion.
+ *
+ * The provider's own prompt signal is authoritative for its flow, but it is not
+ * ours: pi-ai's manual-code prompt carries a private controller that its
+ * completion path aborts, and that path is exactly what a broken callback never
+ * reaches. The caller's cancellation signal is therefore honoured here too, so a
+ * cancelled or timed-out sign-in can never leave this promise — and with it the
+ * whole operation — pending forever.
+ *
+ * @param prompt - the provider's prompt request.
+ * @param cancelSignal - the sign-in operation's own cancellation signal.
+ * @returns the entered value when the provider settles the prompt itself.
+ */
+function waitForPromptAbort(prompt: AuthPrompt, cancelSignal?: AbortSignal): Promise<string> {
   const signal = prompt.signal;
-  if (signal === undefined) return new Promise<string>(() => {});
-  if (signal.aborted) return Promise.reject(signal.reason);
+  if (signal === undefined && cancelSignal === undefined) {
+    return new Promise<string>(() => {});
+  }
+  if (signal?.aborted === true) return Promise.reject(signal.reason);
+  if (cancelSignal?.aborted === true) return Promise.reject(cancelSignal.reason);
   return new Promise<string>((_resolve, reject) => {
-    signal.addEventListener(
-      "abort",
-      () => {
-        reject(signal.reason);
-      },
-      { once: true }
-    );
+    const rejectWith = (reason: unknown): void => {
+      reject(reason);
+    };
+    signal?.addEventListener("abort", () => { rejectWith(signal.reason); }, { once: true });
+    cancelSignal?.addEventListener("abort", () => { rejectWith(cancelSignal.reason); }, { once: true });
+  });
+}
+
+/**
+ * Whether one loopback address can be bound right now.
+ *
+ * Used to refuse a sign-in whose callback could never arrive: the provider owns
+ * the callback listener and swallows its own bind failure, so a busy port would
+ * otherwise start a flow that waits forever for a callback already served by
+ * somebody else.
+ *
+ * @param host - loopback address the provider will bind.
+ * @param port - callback port.
+ * @returns false when the bind is refused.
+ */
+function loopbackPortAvailable(host: string, port: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const probe = createServer();
+    probe.once("error", () => { resolve(false); });
+    probe.listen(port, host, () => {
+      probe.close(() => { resolve(true); });
+    });
   });
 }
 
@@ -228,6 +269,7 @@ export class OpenAICodexWebAuth {
           `OpenAI Codex did not provide an authorization URL within ${String(this.challengeTimeoutMs)}ms`
         )
       );
+      this.detachOperation();
     }, this.challengeTimeoutMs);
     this.challengeTimer.unref();
     const signInTimer = setTimeout(() => {
@@ -236,6 +278,7 @@ export class OpenAICodexWebAuth {
           "OpenAI Codex sign-in timed out waiting for the browser callback"
         )
       );
+      this.detachOperation();
     }, this.signInTimeoutMs);
     signInTimer.unref();
     const login = (): Promise<void> =>
@@ -245,18 +288,28 @@ export class OpenAICodexWebAuth {
             prompt: (prompt) =>
               prompt.type === "select"
                 ? Promise.resolve("browser")
-                : waitForPromptAbort(prompt),
+                : waitForPromptAbort(prompt, cancellation.signal),
             notify: (event) => {
               this.onEvent(event);
             },
           },
           this.store
         );
-    this.operation = (
-      this.beforeNetworkRequest === undefined
-        ? login()
-        : this.beforeNetworkRequest().then(login)
-    )
+    this.operation = (async () => {
+      // The provider owns the callback listener and swallows its own bind
+      // failure (it resolves a dead server and keeps going), which would leave a
+      // flow waiting for a callback somebody else's listener is answering.
+      // Refuse it here, where the reason can still be told to the user.
+      const callbackHost = codexCallbackHost();
+      if (!(await loopbackPortAvailable(callbackHost, OPENAI_CODEX_CALLBACK_PORT))) {
+        throw new Error(
+          `OpenAI Codex cannot receive its browser callback: ${callbackHost}:${String(OPENAI_CODEX_CALLBACK_PORT)} is already in use ` +
+            "(an earlier unfinished sign-in in this dsh process, or the Codex CLI). Restart `dsh web` and try again."
+        );
+      }
+      await this.beforeNetworkRequest?.();
+      await login();
+    })()
       .then(
         async () => {
           if (this.challenge === undefined) {
@@ -348,6 +401,21 @@ export class OpenAICodexWebAuth {
   private rejectChallenge(error: unknown): void {
     this.clearChallengeTimer();
     for (const waiter of this.challengeWaiters.splice(0)) waiter.reject(error);
+  }
+
+  /**
+   * Forget the in-flight operation so a later attempt starts a fresh flow.
+   *
+   * Cancellation only reaches the provider when it is already waiting on our
+   * signal; a flow parked on a prompt of its own would keep the operation set
+   * forever, and every later `signIn()` would then join a conversation that is
+   * over — presenting as an endless "waiting for the authorization page" with no
+   * error at all. The abandoned promise is left to settle on its own.
+   */
+  private detachOperation(): void {
+    this.operation = undefined;
+    this.cancellation = undefined;
+    this.challenge = undefined;
   }
 
   private clearChallengeTimer(): void {

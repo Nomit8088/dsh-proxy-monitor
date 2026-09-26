@@ -95,15 +95,17 @@ function LoginInstruction({ method }: { method: LoginMethod }): ReactNode {
     )
   }
 
-  // Browser flow. `url` may be absent before the host has minted the page.
+  // Browser flow. `url` may be absent while the host is still minting the page
+  // (its own wait is bounded), so the hint names what is happening rather than
+  // leaving the reader to guess at a blank state.
   if (method.url === undefined) {
-    return <span className={css.hint}>等待授权页…</span>
+    return <span className={css.hint}>正在申请授权页…（最多 30 秒）</span>
   }
   return (
     <span className={css.instruction}>
       在{' '}
-      <a className={css.link} href={method.url} target="_blank" rel="noreferrer">
-        授权页
+      <a className={css.linkButton} href={method.url} target="_blank" rel="noreferrer">
+        打开授权页
       </a>{' '}
       完成登录
     </span>

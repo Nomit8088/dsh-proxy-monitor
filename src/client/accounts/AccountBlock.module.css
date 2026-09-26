@@ -155,8 +155,29 @@
   border-radius: 6px;
   border: 1px solid var(--dsw-alias-button-primary-fill);
   background: var(--dsw-alias-button-primary-fill);
-  color: var(--dsw-alias-label-primary);
+  /* The shell pairs a primary fill with this token (`ui-primitives/Button`):
+     `label-primary` is the *surface* text colour and turns dark-on-dark here. */
+  color: var(--dsw-alias-label-primary-foreground);
   cursor: pointer;
+}
+
+/* The authorization page is the primary action of a browser login, so it wears
+   the primary button's clothes instead of small link text. */
+.linkButton {
+  align-self: flex-start;
+  display: inline-block;
+  font-size: 12px;
+  padding: 3px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-button-primary-fill);
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-foreground);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.linkButton:hover {
+  opacity: 0.9;
 }
 
 .button:disabled {
