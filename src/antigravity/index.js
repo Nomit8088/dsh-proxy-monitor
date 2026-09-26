@@ -478,15 +478,31 @@ function endpointCandidates() {
   return explicit ? [assertSafeApiBaseUrl(explicit)] : ENDPOINT_FALLBACKS;
 }
 
-function resolveCallbackHost(raw = antigravityEnv("CALLBACK_HOST")) {
-  const host = (raw || "127.0.0.1").trim().toLowerCase();
+/**
+* Loopback addresses the OAuth callback must be reachable on.
+*
+* The registered redirect URI is `http://localhost:<port>/oauth-callback` (the
+* provider holds that exact string, so it cannot be changed), and `localhost`
+* resolves to whichever loopback family the *browser's* resolver prefers. On
+* Windows with no `localhost` entry in the hosts file that is IPv6 (`::1`
+* carries the highest prefix precedence), so a listener bound to `127.0.0.1`
+* alone is unreachable: the browser's redirect dies on a refused connection and
+* the flow only ever reports its callback timeout. Both families are therefore
+* bound for the default configuration.
+*
+* An explicit `ANTIGRAVITY_CALLBACK_HOST` still pins one address, which is the
+* escape hatch for a machine where one family is unusable.
+*/
+function callbackHosts(raw = antigravityEnv("CALLBACK_HOST")) {
+  const host = (raw || "").trim().toLowerCase();
+  if (host === "") return ["::1", "127.0.0.1"];
   const loopbackHosts = new Set(["127.0.0.1", "::1", "localhost"]);
   if (!loopbackHosts.has(host)) {
     throw new Error(
       `Unsafe ANTIGRAVITY_CALLBACK_HOST="${host}". Only loopback hosts are allowed: 127.0.0.1, ::1, localhost.`,
     );
   }
-  return host === "localhost" ? "127.0.0.1" : host;
+  return host === "localhost" ? ["::1", "127.0.0.1"] : [host];
 }
 
 function callbackPort() {
@@ -2188,6 +2204,8 @@ async function getUserEmail(token) {
 function startCallbackServer(expectedState) {
   return new Promise((resolve, reject) => {
     let settled = false;
+    let published = false;
+    let failures = 0;
     let timeout;
     let resolveCode;
     let rejectCode;
@@ -2202,7 +2220,22 @@ function startCallbackServer(expectedState) {
       fn();
     };
     const callbackUrl = redirectUri();
-    const server = createServer((request, response) => {
+    /**
+    * One listener per loopback family, sharing this handler: whichever address
+    * the browser's resolver picked answers, and the flow settles on the first
+    * callback that arrives. Both are closed together (see `closeAll`).
+    */
+    const listeners = [];
+    const closeAll = () => {
+      for (const listener of listeners.splice(0)) {
+        try {
+          listener.close();
+        } catch {
+          // A listener that never bound (or is already closed) has nothing to release.
+        }
+      }
+    };
+    const handle = (request, response) => {
       if (request.method !== "GET" && request.method !== "HEAD") {
         response.writeHead(405, oauthCallbackHeaders("text/plain; charset=utf-8"));
         response.end("Method Not Allowed");
@@ -2239,15 +2272,30 @@ function startCallbackServer(expectedState) {
       response.writeHead(200, oauthCallbackHeaders());
       response.end("Antigravity authentication complete. You can close this window and return to DSH.");
       finish(() => resolveCode({ code, state }));
-    });
-    server.on("error", reject);
-    server.listen(callbackPort(), resolveCallbackHost(), () => {
-      timeout = setTimeout(() => {
-        finish(() => rejectCode(new Error("OAuth callback timed out waiting for browser login")));
-        server.close();
-      }, OAUTH_CALLBACK_TIMEOUT_MS);
-      resolve({ server, waitForCode: () => codePromise });
-    });
+    };
+    const hosts = callbackHosts();
+    for (const host of hosts) {
+      const listener = createServer(handle);
+      listeners.push(listener);
+      listener.on("error", (error) => {
+        failures += 1;
+        // One unusable family (e.g. IPv6 disabled) is not a failure as long as
+        // the other bound; only losing every address refuses the login.
+        if (!published && failures === hosts.length) {
+          closeAll();
+          finish(() => reject(error));
+        }
+      });
+      listener.listen(callbackPort(), host, () => {
+        if (published) return;
+        published = true;
+        timeout = setTimeout(() => {
+          finish(() => rejectCode(new Error("OAuth callback timed out waiting for browser login")));
+          closeAll();
+        }, OAUTH_CALLBACK_TIMEOUT_MS);
+        resolve({ server: { close: closeAll }, waitForCode: () => codePromise });
+      });
+    }
   });
 }
 

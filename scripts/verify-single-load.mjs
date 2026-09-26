@@ -83,8 +83,15 @@ function bundlePackageJson(name) {
  * Count the loader rows naming `plugin` across the whole composition. A row is
  * an entry in a patch file's `insert` list; the plugin's own bundle patch is the
  * usual contributor, and a hand-written row in the profile patch layer is the
- * other. Duplicate rows with the same id are also a hard boot failure
+ * other. Duplicate *insert* rows with the same id are also a hard boot failure
  * ("duplicate loader entry id"), so ids are tracked too.
+ *
+ * Only rows inside an `insert:` list mount an entry. A top-level `- id:` row is
+ * an id-targeted override — the shape the settings seam writes when a user edits
+ * an entry's configuration (`- id: dsh-proxy-monitor` + `config:`) — and such a
+ * row naming the same plugin must not be mistaken for a second mount: it merges
+ * into the row the bundle already inserted. The scanner therefore tracks which
+ * enclosing block a row belongs to.
  */
 const rows = []
 const patchFiles = []
@@ -93,15 +100,33 @@ function collectPatch(patchPath, origin) {
   if (!existsSync(patchPath)) return
   const text = readFileSync(patchPath, 'utf8')
   patchFiles.push(`${origin}: ${patchPath}`)
-  // Minimal YAML: only the `- id: <x>` / `name: <y>` pairs matter here, and the
-  // real patch files in this ecosystem use exactly that flat shape.
+  // Minimal YAML: only the `- id: <x>` / `name: <y>` pairs matter here, plus the
+  // `insert:` block each row belongs to.
   let current = null
+  let insertIndent
   for (const raw of text.split('\n')) {
     const line = raw.replace(/#.*$/, '').trimEnd()
+    if (line.trim() === '') continue
+    const indent = line.length - line.trimStart().length
+    const insertKeyAt = line.indexOf('insert:')
+    if (insertKeyAt >= 0 && /^\s*(?:-\s*)?insert:\s*$/.test(line)) {
+      // Children of an `insert:` list sit deeper than its key, which may itself
+      // be a list item (`- insert:`), so the key column is what matters.
+      insertIndent = insertKeyAt
+      continue
+    }
+    const keyMatch = /^\s*([A-Za-z_][\w-]*):/.exec(line)
+    if (keyMatch && insertIndent !== undefined && indent <= insertIndent) insertIndent = undefined
     const idMatch = /^\s*-\s*id:\s*(\S+)/.exec(line)
     if (idMatch) {
       if (current) rows.push(current)
-      current = { id: idMatch[1], name: undefined, origin }
+      const rowIndent = line.indexOf('-')
+      current = {
+        id: idMatch[1],
+        name: undefined,
+        origin,
+        insert: insertIndent !== undefined && rowIndent > insertIndent,
+      }
       continue
     }
     const nameMatch = /^\s*name:\s*['"]?([^'"\s]+)['"]?/.exec(line)
@@ -124,7 +149,11 @@ for (const bundle of bundles) {
 }
 collectPatch(resolve(profileDir, 'cordis.patch.yml'), 'profile patch')
 
-const staticRows = rows.filter(r => r.name === plugin)
+// The entry id a profile row uses is the bare package name (no scope).
+const pluginEntryId = plugin.split('/').pop()
+const insertRows = rows.filter(r => r.insert && r.name === plugin)
+const overrideRows = rows.filter(r => !r.insert && (r.name === plugin || r.id === pluginEntryId))
+const staticRows = insertRows
 const staticIds = staticRows.map(r => String(r.id).replace(/^['"]|['"]$/g, ''))
 
 // Runtime path: the super-injector registry re-injects every recorded package on
@@ -139,8 +168,10 @@ console.log(`profile          : ${profileName} (${profileDir})`)
 console.log(`bundles          : ${bundles.length}`)
 console.log(`patch files      : ${patchFiles.length}`)
 for (const f of patchFiles) console.log(`  - ${f}`)
-console.log(`loader rows for ${plugin}: ${staticRows.length}`)
+console.log(`insert rows for ${plugin}: ${staticRows.length}`)
 for (const r of staticRows) console.log(`  - id=${r.id} (from ${r.origin})`)
+console.log(`override rows for ${plugin}: ${overrideRows.length}`)
+for (const r of overrideRows) console.log(`  - id=${r.id} (from ${r.origin}) — merges into the inserted row, not a second mount`)
 
 console.log('')
 console.log('=== runtime path (super-injector restore) ===')

@@ -29,6 +29,8 @@ import {
 } from "./trusted-origins.js";
 import { FastModeRegistry, isFastModeSessionId } from "./fast-mode.js";
 import { OPENAI_CODEX_FAST_MODE_PATH } from "./fast-mode-paths.js";
+import { startCodexCallbackBridge } from "./loopback-bridge.js";
+import type { LoopbackBridge } from "./loopback-bridge.js";
 import type {
   ContextWindowPreferences,
   FastModePreferences,
@@ -144,6 +146,12 @@ export class OpenAICodexWebAuth {
     reject(error: unknown): void;
   }> = [];
   private challengeTimer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * Bridge for the loopback family pi-ai did not bind, live while one sign-in
+   * operation is in flight. See `loopback-bridge.ts` for why the callback port
+   * needs both families to answer.
+   */
+  private bridge: LoopbackBridge | undefined;
   private readonly challengeTimeoutMs: number;
   private readonly signInTimeoutMs: number;
   private readonly requestFetch: typeof globalThis.fetch;
@@ -210,6 +218,10 @@ export class OpenAICodexWebAuth {
     this.cancellation = cancellation;
     this.challenge = undefined;
     this.state = { status: "signing-in" };
+    // pi-ai's redirect URI says `localhost`, which a browser may resolve to the
+    // family pi-ai did not bind; the other family is bridged for the lifetime of
+    // this operation (released in the settle chain below).
+    this.bridge = startCodexCallbackBridge();
     this.challengeTimer = setTimeout(() => {
       this.cancelSignIn(
         new Error(
@@ -276,6 +288,8 @@ export class OpenAICodexWebAuth {
       .finally(() => {
         this.clearChallengeTimer();
         clearTimeout(signInTimer);
+        this.bridge?.();
+        this.bridge = undefined;
         this.operation = undefined;
         this.cancellation = undefined;
       });

@@ -68,6 +68,12 @@ export declare class OpenAICodexWebAuth {
     private challenge;
     private challengeWaiters;
     private challengeTimer;
+    /**
+     * Bridge for the loopback family pi-ai did not bind, live while one sign-in
+     * operation is in flight. See `loopback-bridge.ts` for why the callback port
+     * needs both families to answer.
+     */
+    private bridge;
     private readonly challengeTimeoutMs;
     private readonly signInTimeoutMs;
     private readonly requestFetch;
