@@ -15,8 +15,52 @@ import type { Api, Model } from '@earendil-works/pi-ai'
 /** Official Codex account model listing. */
 export const LIVE_CODEX_MODELS_URL = 'https://chatgpt.com/backend-api/codex/models'
 
+/**
+ * Client version this plugin claims when listing models.
+ *
+ * The endpoint requires the `client_version` query parameter and answers 400
+ * `Field required` without it, which is why an unparameterised fetch never
+ * discovered anything. It then *gates the catalog by that version*: every entry
+ * carries a `minimal_client_version`, and only entries at or below the claimed
+ * version are returned.
+ *
+ * Measured against the live endpoint (account-dependent):
+ *
+ * | claimed  | newest entry returned   |
+ * | -------- | ----------------------- |
+ * | (absent)| HTTP 400, no listing    |
+ * | 0.150.1  | gpt-5.6-*               |
+ * | 0.153.0  | + gpt-6-astra           |
+ * | 0.155.0  | + gpt-6-sol/luna        |
+ * | 0.159.0  | + gpt-6.1-sol           |
+ * | 1.0.0    | same full catalog       |
+ * | 999.999.999 | same full catalog    |
+ *
+ * The gate is monotonic with no observed upper bound, and non-semver values
+ * (`latest`) are rejected with `Invalid client_version format`. Claiming a
+ * version above the shipped CLI is therefore what surfaces newly released
+ * models; the value must stay semver, and an owner can override it in the
+ * Codex settings when a future release outruns it.
+ */
+export const LIVE_CODEX_CLIENT_VERSION = '1.0.0'
+
 const LIVE_MODELS_TIMEOUT_MS = 12_000
-const LIVE_MODELS_MAX_BYTES = 512 * 1024
+
+/**
+ * Ceiling for the listing body.
+ *
+ * The payload carries full instructions, tool schemas and approval policies per
+ * model, so it is far larger than the slug list this module actually reads and
+ * it grows with every release: 10 entries already measured ~595 KB, over the
+ * original 512 KB cap. Exceeding this drops the whole listing, so the bound has
+ * to sit comfortably above the current size rather than just above it.
+ */
+const LIVE_MODELS_MAX_BYTES = 4 * 1024 * 1024
+
+/** Build the listing URL for a claimed client version. */
+export function liveCodexModelsUrl(clientVersion: string = LIVE_CODEX_CLIENT_VERSION): string {
+  return `${LIVE_CODEX_MODELS_URL}?client_version=${encodeURIComponent(clientVersion)}`
+}
 
 /** Facts one live listing entry contributes to a synthesized model. */
 export interface LiveCodexModelFact {
@@ -44,6 +88,12 @@ function slugOf(entry: Record<string, unknown>): string | undefined {
 /**
  * Extract chat-model facts from a Codex `/codex/models` payload.
  * Unknown shapes yield an empty list rather than failing the listing.
+ *
+ * Entries carrying `visibility: "hide"` are skipped: that is upstream's own
+ * signal that a model is internal (it returns `gpt-reserve` and
+ * `codex-auto-review` that way), and the listing is the only place the plugin
+ * learns about models pi-ai does not ship — so without this filter those two
+ * would be synthesized straight into the user-facing picker.
  */
 export function parseLiveCodexModels(payload: unknown): LiveCodexModelFact[] {
   const rows: unknown[] = Array.isArray(payload)
@@ -57,6 +107,7 @@ export function parseLiveCodexModels(payload: unknown): LiveCodexModelFact[] {
   const seen = new Set<string>()
   for (const row of rows) {
     if (!isRecord(row)) continue
+    if (row.visibility === 'hide') continue
     const id = slugOf(row)
     if (id === undefined || seen.has(id)) continue
     seen.add(id)
@@ -132,12 +183,37 @@ export interface CodexLiveAuth {
   accountId: string
 }
 
+/**
+ * Outcome of the most recent listing attempt.
+ *
+ * The overlay is best-effort by design, so a failed listing is not fatal — but
+ * it used to be *invisible*, which is what made "I hit refresh and the new
+ * model never appeared" impossible to diagnose from the UI. This is the
+ * measurement: `ok` plus either the reported model count or the reason.
+ */
+export interface LiveCodexListingStatus {
+  /** Whether the last attempt produced a usable listing. */
+  ok: boolean
+  /** When the attempt settled, epoch ms. */
+  at: number
+  /** Client version claimed on the request. */
+  clientVersion: string
+  /** Models the listing reported, once it succeeded. */
+  count?: number
+  /** Why the attempt failed, when it did. */
+  error?: string
+}
+
 /** Options one catalog instance is constructed with. */
 export interface CodexLiveModelCatalogOptions {
   resolveAuth: () => Promise<CodexLiveAuth | undefined>
   fetchImpl?: typeof fetch
   warn?: (message: string) => void
   onChange?: () => void
+  /** Client version to claim; defaults to {@link LIVE_CODEX_CLIENT_VERSION}. */
+  clientVersion?: string | (() => string)
+  /** Observe each listing attempt, successful or not. */
+  onStatus?: (status: LiveCodexListingStatus) => void
 }
 
 /**
@@ -174,15 +250,30 @@ export class CodexLiveModelCatalog {
   }
 
   private async fetchOnce(): Promise<void> {
+    const clientVersion = this.clientVersion()
     let auth: CodexLiveAuth | undefined
     try {
       auth = await this.options.resolveAuth()
-    } catch {
+    } catch (error) {
+      this.report({
+        ok: false,
+        at: Date.now(),
+        clientVersion,
+        error: `credential read failed: ${error instanceof Error ? error.message : String(error)}`,
+      })
       return
     }
-    if (auth === undefined) return
+    if (auth === undefined) {
+      this.report({
+        ok: false,
+        at: Date.now(),
+        clientVersion,
+        error: 'not signed in (no Codex credential to list with)',
+      })
+      return
+    }
     try {
-      const response = await (this.options.fetchImpl ?? fetch)(LIVE_CODEX_MODELS_URL, {
+      const response = await (this.options.fetchImpl ?? fetch)(liveCodexModelsUrl(clientVersion), {
         method: 'GET',
         redirect: 'error',
         headers: {
@@ -196,25 +287,52 @@ export class CodexLiveModelCatalog {
       })
       if (!response.ok) {
         try { await response.body?.cancel() } catch { /* best effort */ }
-        this.options.warn?.(`live Codex model listing answered ${String(response.status)}`)
+        const message = `live Codex model listing answered ${String(response.status)}`
+        this.options.warn?.(message)
+        this.report({ ok: false, at: Date.now(), clientVersion, error: message })
         return
       }
       const text = await response.text()
       if (text.length > LIVE_MODELS_MAX_BYTES) {
-        this.options.warn?.('live Codex model listing exceeded the size limit')
+        const message = `live Codex model listing exceeded the size limit (${String(text.length)} bytes)`
+        this.options.warn?.(message)
+        this.report({ ok: false, at: Date.now(), clientVersion, error: message })
         return
       }
       const facts = parseLiveCodexModels(JSON.parse(text) as unknown)
       this.facts = facts
+      this.report({ ok: true, at: Date.now(), clientVersion, count: facts.length })
       const ids = facts.map(fact => fact.id).sort().join(',')
       if (ids !== this.knownIds) {
         this.knownIds = ids
         this.options.onChange?.()
       }
     } catch (error) {
-      this.options.warn?.(
-        `live Codex model listing failed (${error instanceof Error ? error.name : 'Error'}); serving the installed catalog`,
-      )
+      const message = `live Codex model listing failed (${error instanceof Error ? error.name : 'Error'}); serving the installed catalog`
+      this.options.warn?.(message)
+      this.report({ ok: false, at: Date.now(), clientVersion, error: message })
     }
+  }
+
+  /** Publish one attempt's outcome without letting an observer break the fetch. */
+  private report(status: LiveCodexListingStatus): void {
+    try {
+      this.options.onStatus?.(status)
+    } catch {
+      /* an observation surface must never fail the listing */
+    }
+  }
+
+  /**
+   * Resolve the version to claim for one attempt.
+   *
+   * Read per attempt rather than captured at construction: the settings layer
+   * can change it while the plugin is live, and the next refresh must honour
+   * that without a reload.
+   */
+  private clientVersion(): string {
+    const configured = this.options.clientVersion
+    const value = typeof configured === 'function' ? configured() : configured
+    return value === undefined || value.length === 0 ? LIVE_CODEX_CLIENT_VERSION : value
   }
 }

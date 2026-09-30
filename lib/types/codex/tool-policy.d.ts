@@ -37,11 +37,31 @@ export interface FastModePreferences {
     /** Force the priority service tier on all sessions without the per-session toggle. */
     fastModeDefault: boolean;
 }
+/**
+ * Client version claimed when listing Codex models.
+ *
+ * The listing endpoint gates its catalog by this value, so it decides which
+ * newly released models are discoverable at all. Empty keeps the shipped
+ * default; setting it lets an owner reach a model whose gate is newer than this
+ * build without waiting for a plugin release.
+ */
+export interface LiveCatalogPreferences {
+    /** Semver to claim, or empty to use the plugin's default. */
+    clientVersion: string;
+}
+/**
+ * Whether a claimed version is the semver shape the listing endpoint accepts.
+ *
+ * It rejects anything else outright (`latest` → 400 `Invalid client_version
+ * format`), so accepting a free-form string here would trade a wrong default
+ * for a silently failing refresh.
+ */
+export declare function isSemverLike(value: string): boolean;
 /** Browser projection containing both available and currently visible models. */
 export interface ModelCatalogSettings extends ModelCatalogPreferences {
     availableModels: ModelCatalogEntry[];
 }
-interface OpenAICodexPreferences extends ImageToolPreferences, ResponseApiPreferences, ModelCatalogPreferences, ContextWindowPreferences, FastModePreferences, ProxyPreferences {
+interface OpenAICodexPreferences extends ImageToolPreferences, ResponseApiPreferences, ModelCatalogPreferences, ContextWindowPreferences, FastModePreferences, LiveCatalogPreferences, ProxyPreferences {
     /** Migration-only key written by the unreleased store:true experiment. */
     useStatefulResponses: boolean;
 }
@@ -53,6 +73,8 @@ export declare const DEFAULT_RESPONSE_API_PREFERENCES: ResponseApiPreferences;
 export declare const DEFAULT_CONTEXT_WINDOW_PREFERENCES: ContextWindowPreferences;
 /** Keep Fast Mode a per-session opt-in until the owner forces it globally. */
 export declare const DEFAULT_FAST_MODE_PREFERENCES: FastModePreferences;
+/** Claim the plugin's own gate by default; an owner may raise it. */
+export declare const DEFAULT_LIVE_CATALOG_PREFERENCES: LiveCatalogPreferences;
 /** Live policy shared by the host tools, Codex adapter, and settings HTTP surface. */
 export declare class ImageToolPolicy {
     private current;
@@ -102,6 +124,16 @@ export declare class ImageToolPolicy {
     fastModeSnapshot(): FastModePreferences;
     /** Persist the Fast Mode default toggle. */
     updateFastMode(patch: Partial<FastModePreferences>): Promise<FastModePreferences>;
+    /** Return the client version the live listing currently claims. */
+    liveCatalogSnapshot(): LiveCatalogPreferences;
+    /**
+     * Persist a live-catalog version override.
+     *
+     * An empty string restores the plugin default. A non-empty value must be
+     * semver-shaped, because the listing endpoint rejects anything else and the
+     * failure would look like "the catalog is empty" rather than a bad setting.
+     */
+    updateLiveCatalog(patch: Partial<LiveCatalogPreferences>): Promise<LiveCatalogPreferences>;
     /** Return the live provider proxy mode and explicit URL. */
     proxySnapshot(): ProxyPreferences;
     /** Observe proxy changes so the transport can reconcile global mode. */

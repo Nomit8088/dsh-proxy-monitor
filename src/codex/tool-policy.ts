@@ -56,6 +56,30 @@ export interface FastModePreferences {
   fastModeDefault: boolean;
 }
 
+/**
+ * Client version claimed when listing Codex models.
+ *
+ * The listing endpoint gates its catalog by this value, so it decides which
+ * newly released models are discoverable at all. Empty keeps the shipped
+ * default; setting it lets an owner reach a model whose gate is newer than this
+ * build without waiting for a plugin release.
+ */
+export interface LiveCatalogPreferences {
+  /** Semver to claim, or empty to use the plugin's default. */
+  clientVersion: string;
+}
+
+/**
+ * Whether a claimed version is the semver shape the listing endpoint accepts.
+ *
+ * It rejects anything else outright (`latest` → 400 `Invalid client_version
+ * format`), so accepting a free-form string here would trade a wrong default
+ * for a silently failing refresh.
+ */
+export function isSemverLike(value: string): boolean {
+  return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value);
+}
+
 /** Browser projection containing both available and currently visible models. */
 export interface ModelCatalogSettings extends ModelCatalogPreferences {
   availableModels: ModelCatalogEntry[];
@@ -68,6 +92,7 @@ interface OpenAICodexPreferences
     ModelCatalogPreferences,
     ContextWindowPreferences,
     FastModePreferences,
+    LiveCatalogPreferences,
     ProxyPreferences {
   /** Migration-only key written by the unreleased store:true experiment. */
   useStatefulResponses: boolean;
@@ -94,6 +119,11 @@ export const DEFAULT_CONTEXT_WINDOW_PREFERENCES: ContextWindowPreferences = {
 /** Keep Fast Mode a per-session opt-in until the owner forces it globally. */
 export const DEFAULT_FAST_MODE_PREFERENCES: FastModePreferences = {
   fastModeDefault: false,
+};
+
+/** Claim the plugin's own gate by default; an owner may raise it. */
+export const DEFAULT_LIVE_CATALOG_PREFERENCES: LiveCatalogPreferences = {
+  clientVersion: "",
 };
 
 /**
@@ -127,6 +157,7 @@ function preferenceSchema(
     models: z.array(z.string()).default([...defaultModels]),
     imageModels: z.array(z.string()).default([...defaultImageModels]),
     fastModeDefault: z.boolean().default(false),
+    clientVersion: z.string().default(""),
   });
 }
 
@@ -151,6 +182,7 @@ export class ImageToolPolicy {
       ...DEFAULT_RESPONSE_API_PREFERENCES,
       ...DEFAULT_CONTEXT_WINDOW_PREFERENCES,
       ...DEFAULT_FAST_MODE_PREFERENCES,
+      ...DEFAULT_LIVE_CATALOG_PREFERENCES,
       ...DEFAULT_PROXY_PREFERENCES,
       useStatefulResponses: false,
       ...base,
@@ -306,6 +338,33 @@ export class ImageToolPolicy {
   ): Promise<FastModePreferences> {
     await this.persist(patch);
     return this.fastModeSnapshot();
+  }
+
+  /** Return the client version the live listing currently claims. */
+  liveCatalogSnapshot(): LiveCatalogPreferences {
+    return {
+      clientVersion: this.current.clientVersion,
+    };
+  }
+
+  /**
+   * Persist a live-catalog version override.
+   *
+   * An empty string restores the plugin default. A non-empty value must be
+   * semver-shaped, because the listing endpoint rejects anything else and the
+   * failure would look like "the catalog is empty" rather than a bad setting.
+   */
+  async updateLiveCatalog(
+    patch: Partial<LiveCatalogPreferences>
+  ): Promise<LiveCatalogPreferences> {
+    const next = { ...this.current, ...patch };
+    if (next.clientVersion !== "" && !isSemverLike(next.clientVersion)) {
+      throw new Error(
+        `clientVersion must be a semver such as 1.0.0, or empty for the default (received ${JSON.stringify(next.clientVersion)})`
+      );
+    }
+    await this.persist(patch);
+    return this.liveCatalogSnapshot();
   }
 
   /** Return the live provider proxy mode and explicit URL. */

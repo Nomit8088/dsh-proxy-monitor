@@ -16,7 +16,7 @@
  */
 
 /** Which step of a provider's startup an outcome describes. */
-export type SetupPhase = 'apply' | 'route'
+export type SetupPhase = 'apply' | 'route' | 'catalog'
 
 /** One provider's setup result, kept for the life of the process. */
 export interface SetupOutcome {
